@@ -1,0 +1,85 @@
+;;shave chart templates
+(ns taapost.shave
+  (:require [clojure.walk :as w]))
+
+(defn unjson [in]
+  (w/postwalk
+   (fn [frm]
+     (if (map? frm)
+       (zipmap (map keyword (keys frm)) (vals frm))
+       frm)) in))
+
+(def test-data
+  [{:src "A"  :trend "RA Supply" :quantity 
+       }])
+
+(def stacked-vl
+  {:data {:url "https://raw.githubusercontent.com/vega/vega/refs/heads/main/docs/data/barley.json"},
+   :title {:text  "Aviation-Aggregated modeling Results as Percentages of Demand"
+           :subtitle "Conflict-Phase 3 Most Stressful Scenario"}
+   :config {:background "lightgrey"}
+   :width 800
+   :encoding
+   {:x {:type "nominal", :field "variety"
+        :axis {:labels false :title nil}}
+    :y {:type "quantitative", :aggregate "sum", :field "yield", :stack "zero" }},
+   :layer
+   [{:mark {:type "bar" :binSpacing 20 :width 20},
+     :encoding {:color {:type "nominal", :field "site"
+                        :legend {:direction "horizontal"
+                                 :orient "bottom"}}}}
+    #_
+    {:mark {:type "text", :color "black", :dy -15, :dx 0},
+     :encoding
+     {:detail {:type "nominal", :field "site"},
+      :text
+      {:type "quantitative", :aggregate "sum", :field "yield", :format ".1f"}}}
+    ;;title
+    {:mark {:type "text", :color "black", :dy 10, :dx 0 :angle -90 :align "left"},
+     :encoding
+     {:detail {:type "nominal", :field "variety"},
+      :text    {:type "nominal", :field "variety"}
+      :y  {:datum 0}}}
+    ;;str
+    {:mark {:type "text", :color "black", :dy 20, :dx 0 :angle -90 :align "left"},
+     :encoding
+     {;:detail {:type "nominal", :field "variety"},
+      :text    {:type "nominal", :field "variety"}
+      :y  {:datum 0}}}
+    ;;rule.
+    {:mark "rule"
+     :encoding {:x nil ;;this works but I'm not happy.
+                :y {:datum 100}
+                :color {:value "red"}}}
+    ]})
+
+
+;;Shave charts are produced for 2 subviews:
+;;Campaigning, Phase3.
+;;Only for a single level of supply (statically at least).
+
+
+;;There are 2 classes of charts:
+;;SRCs By Branch
+
+
+;;Aggregate branch.
+
+;;data format...
+;;select supply where ra = programmed.
+;;group-by [src phase], for phase in [campaignining, phase3]
+
+;;aggregate by rep seed.
+;;compute mean by campaigning.
+
+;;categories:
+;;RA Supply, RC Supply, RC Unavailable as Portion of Unmet,
+;;Unmet Demand, RC Unavailable Leftover from Unmet
+
+;;rep-seed	SRC	phase	AC-fill	NG-fill	RC-fill	AC-overlap	NG-overlap	RC-overlap	total-quantity	AC-deployable	NG-deployable	RC-deployable	AC-not-ready	NG-not-ready	RC-not-ready	AC-total	NG-total	RC-total	AC	NG	RC
+
+;;I think we assume max ac is the programmed supply for now.
+;;We can also specify that?
+;;Maybe by the time we get here, we should assume we have our inputs pared down to a single supply per src.
+
+(defn bar-chart [])
