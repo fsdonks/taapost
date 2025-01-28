@@ -1,6 +1,7 @@
 ;;shave chart templates
 (ns taapost.shave
-  (:require [clojure.walk :as w]))
+  (:require [clojure.walk :as w]
+            [oz [core :as oz] [headless :as h]]))
 
 (defn unjson [in]
   (w/postwalk
@@ -8,10 +9,6 @@
      (if (map? frm)
        (zipmap (map keyword (keys frm)) (vals frm))
        frm)) in))
-
-(def test-data
-  [{:src "A"  :trend "RA Supply" :quantity 
-       }])
 
 (def stacked-vl
   {:data {:url "https://raw.githubusercontent.com/vega/vega/refs/heads/main/docs/data/barley.json"},
@@ -82,4 +79,31 @@
 ;;We can also specify that?
 ;;Maybe by the time we get here, we should assume we have our inputs pared down to a single supply per src.
 
-(defn bar-chart [])
+
+(require '[tablecloth.api :as tc])
+
+;;[src [ac ng rc] phase] -> reps.
+
+;;can we just accumulate a max or programmed supply?
+;;tbd - do this using tmd stuff.
+(defn get-maxes [ds]
+  (->> (tc/rows ds :as-maps)
+       (reduce (fn [acc {:keys [ AC NG RC]}]
+                 (-> acc
+                     (update :AC max AC)
+                     (update :NG max NG)
+                     (update :RC max RC)))
+               {:AC 0 :NG 0 :RC 0})))
+
+;;we just get 1 supply....do we know what the programmed force supply is?
+(defn bar-charts [data]
+  (for [[{:keys [SRC]} src-data] (tc/group-by d [:SRC] {:result-type :as-map})]
+    (let [{ac-max :AC rc-max :RC ng-max :NG} (get-maxes src-data)
+          supply (tc/select-rows src-data (fn [{:keys [AC RC NG]}]
+                                            (and (= AC ac-max)
+                                                 (= RC rc-max)
+                                                 (= NG ng-max))))]
+      [SRC supply])))
+
+;;Generate bar charts by phases....
+;;just get data for one phase.
