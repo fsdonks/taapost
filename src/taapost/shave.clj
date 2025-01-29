@@ -1,7 +1,8 @@
 ;;shave chart templates
 (ns taapost.shave
   (:require [clojure.walk :as w]
-            [oz [core :as oz] [headless :as h]]))
+            [oz [core :as oz] [headless :as h]]
+            [tablecloth.api :as tc]))
 
 (defn unjson [in]
   (w/postwalk
@@ -80,8 +81,6 @@
 ;;Maybe by the time we get here, we should assume we have our inputs pared down to a single supply per src.
 
 
-(require '[tablecloth.api :as tc])
-
 ;;[src [ac ng rc] phase] -> reps.
 
 ;;can we just accumulate a max or programmed supply?
@@ -97,7 +96,8 @@
 
 ;;we just get 1 supply....do we know what the programmed force supply is?
 (defn bar-charts [data]
-  (for [[{:keys [SRC]} src-data] (tc/group-by d [:SRC] {:result-type :as-map})]
+  (for [[{:keys [SRC]} src-data]
+          (tc/group-by data [:SRC] {:result-type :as-map})]
     (let [{ac-max :AC rc-max :RC ng-max :NG} (get-maxes src-data)
           supply (tc/select-rows src-data (fn [{:keys [AC RC NG]}]
                                             (and (= AC ac-max)
@@ -107,3 +107,19 @@
 
 ;;Generate bar charts by phases....
 ;;just get data for one phase.
+#_
+(def d (tc/dataset "../make-one-to-n/resources/results_4_SRCs.csv" {:key-fn keyword}))
+
+;;given a subdataset for a max supply, we want to grab the phases of interest.
+;;generate a bar chart for each phase.
+
+;;assume we have a phase...
+;;we have multiple SRCs per branch.
+;;for each src, we want to extract
+;;[AC RC Unmet-Demand Demand-Met]
+
+;;where AC, RC are directly from the supply.
+;;Unmet-Demand 
+(defn bar-chart [d phase]
+  (let [subdata (tc/select-rows d #(-> % :phase (= phase)))]
+    subdata))
