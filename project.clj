@@ -4,12 +4,13 @@
   :license {:name "EPL-2.0 OR GPL-2.0-or-later WITH Classpath-exception-2.0"
             :url "https://www.eclipse.org/legal/epl-2.0/"}
   :dependencies [[org.clojure/clojure "1.12.0"]
-                 [scicloj/tablecloth "4.04" :exclusions [org.clojure/tools.reader
-                                                         com.taoensso/timbre
-                                                         com.taoensso/encore
-                                                         com.taoensso/truss]]
-                 [roz/roz  "5f4ca6eba093bf08d9eaea335e28042ffd17f7fc"
+                 [scicloj/tablecloth "7.029.2" :exclusions [org.clojure/tools.reader
+                                                            com.taoensso/timbre
+                                                            com.taoensso/encore
+                                                            com.taoensso/truss]]
+                 [roz/roz  "b88bc3617d467254f37c4914c91b41aab734f0cb"
                   :exclusions [com.taoennso/timbre com.taoennso/encore]]
+                 [org.scicloj/tableplot "1-beta9.1"]
                  [org.clojure/tools.reader "1.3.6"]
                  [com.taoensso/timbre "6.6.1"]
                  [com.taoensso/encore  "3.128.0"]

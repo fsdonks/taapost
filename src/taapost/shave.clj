@@ -2,7 +2,10 @@
 (ns taapost.shave
   (:require [clojure.walk :as w]
             [oz [core :as oz] [headless :as h]]
-            [tablecloth.api :as tc]))
+            [scicloj.tableplot.v1.hanami :as hanami]
+            [aerial.hanami.templates :as ht]
+            [tablecloth.api :as tc]
+            [tech.v3.datatype.functional :as dfn]))
 
 (defn unjson [in]
   (w/postwalk
@@ -116,10 +119,52 @@
 ;;assume we have a phase...
 ;;we have multiple SRCs per branch.
 ;;for each src, we want to extract
-;;[AC RC Unmet-Demand Demand-Met]
+;;[AC RC Unmet-Demand Demand-Met ]
 
 ;;where AC, RC are directly from the supply.
-;;Unmet-Demand 
-(defn bar-chart [d phase]
-  (let [subdata (tc/select-rows d #(-> % :phase (= phase)))]
-    subdata))
+;;Unmet-Demand
+
+;;demand-met = sum ACFill RCFill + AC-deployable + NG-deployable +  RC-deployable / total-quantity
+
+;; summarise(Demand =mean(Demand)/phase_length_1, SupplyRA = (mean(RAFill) + mean(RAExcess))/phase_length_1,
+;;                  SupplyRC = (mean(RCFill)+mean(RCExcess))/phase_length_1, RCTotal = mean(RCTotal+NGTotal)/phase_length_1)
+
+;;for each src, we want to collate the reps down into means.
+(defn by-phase [d phase] (tc/select-rows d #(-> % :phase (= phase))))
+
+;;There's the raw fill data for the fm barcharts (the "performance data"),
+;;and then the data for plotting shavecharts.
+;; #shave chart data = (average daily supply ra + average daily supply rc) / average daily demand 
+;; #reduces to average supply ra + average supply rc / average demand reduces to 
+;; #sum(supply ra) + sum(supply rc) / sum(demand)
+;; #bar chart data mean((RCFill+RCExcess)/Demand)
+
+(defn collapse [xs]
+  (case (-> xs meta :datatype)
+    :string (first xs)
+    (dfn/mean xs)))
+
+(defn map-columns* [ds & specs]
+  (->> specs
+       (partition 3)
+       (reduce (fn [acc [colname sel fn]]
+                 (tc/map-columns acc colname sel fn))
+               ds)))
+
+(defn rename [in]
+  (let [cols (->> in tc/column-names
+                  (map (fn [x]
+                         (case x
+                           :total-quantity :Demand
+                           (-> x name (clojure.string/replace "-" "") keyword)))))]
+  (tc/rename-columns in)))
+;;SRC	phase	AC-fill	NG-fill	RC-fill	AC-overlap	NG-overlap	RC-overlap	total-quantity	AC-deployable	NG-deployable	RC-deployable	AC-not-ready	NG-not-ready	RC-not-ready	AC-total	NG-total	RC-total	AC	NG	RC
+(defn bar-chart [d phase phase-length]
+  (let [subdata  (-> d
+                     (by-phase phase)
+                     (map-columns* :RAFill [:AC-fill] identity
+                                   :RCFill [:RC-fill :NG-fill] dfn/+
+                                   :Demand [:total-quantity] identity
+                                   :RAExcess [:AC-deployable] identity
+                                   :RCExcess  [:NG-deployable :RC-deployable] dfn/+))]
+    (tc/aggregate-columns subdata  (disj (set (tc/column-names subdata)) :rep-seed) collapse)))
