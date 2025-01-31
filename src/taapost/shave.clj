@@ -159,12 +159,81 @@
                            (-> x name (clojure.string/replace "-" "") keyword)))))]
   (tc/rename-columns in)))
 ;;SRC	phase	AC-fill	NG-fill	RC-fill	AC-overlap	NG-overlap	RC-overlap	total-quantity	AC-deployable	NG-deployable	RC-deployable	AC-not-ready	NG-not-ready	RC-not-ready	AC-total	NG-total	RC-total	AC	NG	RC
+
+
+;;why is phase length important?
+;;We need to normalize the measures, which are all in demand days, to get them
+;;into units of demand/uics etc.  We do this by dividing by phase length.
+
+;;So if we factor our phase length from all the measures we get them into
+;;some normal form.
+;;note: we can infer phase length trivially from AC-total/AC or
+;;any of the total fields....Since it will just be a time-weighted
+;;sum of the inventory over the phase-length.  That can simplify our
+;;processing a bit.
 (defn bar-chart [d phase phase-length]
-  (let [subdata  (-> d
+  (let [normalized-d (fn [f e d] (/ (+ f e) d))
+        normalized-t (fn [&  xs] (/ (apply + xs) phase-length))
+        subdata  (-> d
                      (by-phase phase)
                      (map-columns* :RAFill [:AC-fill] identity
                                    :RCFill [:RC-fill :NG-fill] dfn/+
+                                   ;;in baseline they divide this by phaselength?
                                    :Demand [:total-quantity] identity
                                    :RAExcess [:AC-deployable] identity
-                                   :RCExcess  [:NG-deployable :RC-deployable] dfn/+))]
+                                   :RCExcess  [:NG-deployable :RC-deployable] dfn/+
+                                   :RASupply  [:RAFill :RAExcess] normalized-t
+                                   :RCSupply  [:RCFill :RCExcess] normalized-t
+                                   :UnmetDemand [:RAFill :RCFill :Demand] normalized-d))]
     (tc/aggregate-columns subdata  (disj (set (tc/column-names subdata)) :rep-seed) collapse)))
+
+;;we want to transform into normalized values.
+;;For the bar chart, (RAFill + RAExcess)/Demand -> RASupply, RCFill + RCExcees -> RCSupply
+
+(def dt
+  (tc/dataset "../make-one-to-n/resources/results_4_SRCs.csv"
+              {:key-fn keyword :separator \tab}))
+
+#_
+(bar-chart (-> s1 second second) "phase3" 981)
+
+#_
+(def stacked-vl
+  {:data {:url "https://raw.githubusercontent.com/vega/vega/refs/heads/main/docs/data/barley.json"},
+   :title {:text  "Aviation-Aggregated modeling Results as Percentages of Demand"
+           :subtitle "Conflict-Phase 3 Most Stressful Scenario"}
+   :config {:background "lightgrey"}
+   :width 800
+   :encoding
+   {:x {:type "nominal", :field "variety"
+        :axis {:labels false :title nil}}
+    :y {:type "quantitative", :aggregate "sum", :field "yield", :stack "zero" }},
+   :layer
+   [{:mark {:type "bar" :binSpacing 20 :width 20},
+     :encoding {:color {:type "nominal", :field "site"
+                        :legend {:direction "horizontal"
+                                 :orient "bottom"}}}}
+    #_
+    {:mark {:type "text", :color "black", :dy -15, :dx 0},
+     :encoding
+     {:detail {:type "nominal", :field "site"},
+      :text
+      {:type "quantitative", :aggregate "sum", :field "yield", :format ".1f"}}}
+    ;;title
+    {:mark {:type "text", :color "black", :dy 10, :dx 0 :angle -90 :align "left"},
+     :encoding
+     {:detail {:type "nominal", :field "variety"},
+      :text    {:type "nominal", :field "variety"}
+      :y  {:datum 0}}}
+    ;;str
+    {:mark {:type "text", :color "black", :dy 20, :dx 0 :angle -90 :align "left"},
+     :encoding
+     {;:detail {:type "nominal", :field "variety"},
+      :text    {:type "nominal", :field "variety"}
+      :y  {:datum 0}}}
+    ;;rule.
+    {:mark "rule"
+     :encoding {:x nil ;;this works but I'm not happy.
+                :y {:datum 100}
+                :color {:value "red"}}}
+    ]})
