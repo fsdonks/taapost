@@ -150,7 +150,7 @@
        (reduce (fn [acc [colname sel fn]]
                  (tc/map-columns acc colname sel fn))
                ds)))
-
+;;may not need this so much.
 (defn rename [in]
   (let [cols (->> in tc/column-names
                   (map (fn [x]
