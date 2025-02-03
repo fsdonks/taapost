@@ -5,7 +5,8 @@
             [scicloj.tableplot.v1.hanami :as hanami]
             [aerial.hanami.templates :as ht]
             [tablecloth.api :as tc]
-            [tech.v3.datatype.functional :as dfn]))
+            [tech.v3.datatype.functional :as dfn]
+            [tech.v3.libs.fastexcel]))
 
 (defn unjson [in]
   (w/postwalk
@@ -178,18 +179,28 @@
 ;;any of the total fields....Since it will just be a time-weighted
 ;;sum of the inventory over the phase-length.  That can simplify our
 ;;processing a bit.
+
+;;depending on the input data, it's possible we have no supply
+;;for any phase.  So we get a divide by zero error.
 (defn derive-length [AC-total NG-total RC-total AC NG RC]
     (cond (pos? AC) (/ AC-total AC)
           (pos? RC) (/ RC-total RC)
-          :else (/ NG-total NG)))
+          (pos? NG) (/ NG-total NG)
+          :else 0))
 
 ;;conform the col names and add computed fields for stats stuff.
 ;;maybe we only call this 1x up higher in the chain.
 (defn stylize [d]
-  (let [normalized (fn [f e d] (double (/ (+ f e) d)))]
+  (let [normalized (fn [f e d] (double (/ (+ f e)
+                                          (if (pos? d) d 1))))
+        lengths (->> (tc/rows d :as-maps)
+                     (reduce (fn [acc {:keys [phase AC-total NG-total RC-total AC NG RC]}]
+                               (update acc phase
+                                       #(max (or % 0)
+                                             (derive-length AC-total NG-total RC-total AC NG RC))))
+                             {}))]
     (-> d
-        (tc/map-columns  :phase-length
-           [:AC-total :NG-total :RC-total :AC :NG :RC] derive-length)
+        (tc/map-columns  :phase-length [:phase] lengths)
         (map-columns* :RAFill    [:AC-fill] identity
                       :RCFill    [:RC-fill :NG-fill] dfn/+
                       :Demand    [:total-quantity]   identity
@@ -199,6 +210,10 @@
 
 ;;we just derive phase-length now. pretty trivial we just add phase-length
 ;;column.
+
+;;preclude divide by zero errors.
+(defn safe-div [x y] (if (zero? y) 0 (dfn// x y)))
+
 (defn fat-shave-data [d phase]
   (let [phased (by-phase d phase)
         pl     (-> (phased :phase-length) first)
@@ -222,18 +237,39 @@
         (tc/ungroup)
         (map-columns* :UnmetDemand      [:Demand :TotalSupply] (fn [dem s] (max (- dem s) 0))
                       :RCUnavailable    [:NG :RC :SupplyRC]  (fn [ng rc supplyrc] (max (- (+ ng rc) supplyrc)))
-                      :RApercent        [:SupplyRA :Demand]    dfn//
-                      :RCpercent        [:SupplyRA :Demand]    dfn//
-                      :UnmetPercent     [:UnmetDemand :Demand] dfn//
-                      :RCunavailpercent [:RCUnavailable :Demand] dfn//
+                      :RApercent        [:SupplyRA :Demand]    safe-div
+                      :RCpercent        [:SupplyRA :Demand]    safe-div
+                      :UnmetPercent     [:UnmetDemand :Demand] safe-div
+                      :RCunavailpercent [:RCUnavailable :Demand] safe-div
                       :Totalpercent     [:RApercent :RCpercent] dfn/+  ))))
+
+(defn round-prod [l r]  (dfn/round (dfn/* l r)))
+(def str-flds [:Demand :SupplyRA :SupplyRC :TotalSupply :UnmetDemand
+               :RCTotal :RCUnavailable])
+(defn join-and-clean [fat unit-detail]
+  (->> (-> (tc/inner-join fat unit-detail [:SRC])
+           (tc/rows :as-maps))
+       (map (fn [{:keys [STR] :as r}]
+              (reduce (fn [acc k] (update acc k * STR)) r str-flds)))
+       tc/dataset))
 
 ;;we want to transform into normalized values.
 ;;For the bar chart, (RAFill + RAExcess)/Demand -> RASupply, RCFill + RCExcees -> RCSupply
+(defn read-unit-detail [path]
+  (-> (tc/dataset path {:key-fn keyword})
+      (tc/select-columns [:SRC :TITLE :STR])))
 
 (def dt
-  (tc/dataset "../make-one-to-n/resources/results_4_SRCs.csv"
-              {:key-fn keyword :separator \tab}))
+  (tc/dataset "../make-one-to-n/resources/results_no_truncation.txt"
+     {:key-fn keyword :separator \tab}))
+
+(def unit-detail (read-unit-detail "../make-one-to-n/resources/SRC_BASELINE.xlsx"))
+
+
+
+
+
+
 
 #_
 (bar-chart (-> s1 second second) "phase3" 981)

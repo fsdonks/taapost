@@ -8,6 +8,7 @@
                                                             com.taoensso/timbre
                                                             com.taoensso/encore
                                                             com.taoensso/truss]]
+                 [org.dhatim/fastexcel-reader "0.12.8" :exclusions [org.apache.poi/poi-ooxml]]
                  [roz/roz  "b88bc3617d467254f37c4914c91b41aab734f0cb"
                   :exclusions [com.taoennso/timbre com.taoennso/encore]]
                  [org.scicloj/tableplot "1-beta9.1"]
