@@ -157,8 +157,15 @@
                          (case x
                            :total-quantity :Demand
                            (-> x name (clojure.string/replace "-" "") keyword)))))]
-  (tc/rename-columns in)))
-;;SRC	phase	AC-fill	NG-fill	RC-fill	AC-overlap	NG-overlap	RC-overlap	total-quantity	AC-deployable	NG-deployable	RC-deployable	AC-not-ready	NG-not-ready	RC-not-ready	AC-total	NG-total	RC-total	AC	NG	RC
+    (tc/rename-columns in)))
+
+;;SRC	phase
+;;AC-fill	NG-fill	RC-fill	AC-overlap NG-overlap	RC-overlap
+;;total-quantity
+;;AC-deployable	NG-deployable	RC-deployable
+;;AC-not-ready	NG-not-ready	RC-not-ready
+;;AC-total	NG-total	RC-total
+;;AC	NG	RC
 
 
 ;;why is phase length important?
@@ -171,21 +178,55 @@
 ;;any of the total fields....Since it will just be a time-weighted
 ;;sum of the inventory over the phase-length.  That can simplify our
 ;;processing a bit.
-(defn bar-chart [d phase phase-length]
-  (let [normalized-d (fn [f e d] (/ (+ f e) d))
-        normalized-t (fn [&  xs] (/ (apply + xs) phase-length))
-        subdata  (-> d
-                     (by-phase phase)
-                     (map-columns* :RAFill [:AC-fill] identity
-                                   :RCFill [:RC-fill :NG-fill] dfn/+
-                                   ;;in baseline they divide this by phaselength?
-                                   :Demand [:total-quantity] identity
-                                   :RAExcess [:AC-deployable] identity
-                                   :RCExcess  [:NG-deployable :RC-deployable] dfn/+
-                                   :RASupply  [:RAFill :RAExcess] normalized-t
-                                   :RCSupply  [:RCFill :RCExcess] normalized-t
-                                   :UnmetDemand [:RAFill :RCFill :Demand] normalized-d))]
-    (tc/aggregate-columns subdata  (disj (set (tc/column-names subdata)) :rep-seed) collapse)))
+(defn derive-length [AC-total NG-total RC-total AC NG RC]
+    (cond (pos? AC) (/ AC-total AC)
+          (pos? RC) (/ RC-total RC)
+          :else (/ NG-total NG)))
+
+;;conform the col names and add computed fields for stats stuff.
+;;maybe we only call this 1x up higher in the chain.
+(defn stylize [d]
+  (let [normalized (fn [f e d] (double (/ (+ f e) d)))]
+    (-> d
+        (tc/map-columns  :phase-length
+           [:AC-total :NG-total :RC-total :AC :NG :RC] derive-length)
+        (map-columns* :RAFill    [:AC-fill] identity
+                      :RCFill    [:RC-fill :NG-fill] dfn/+
+                      :Demand    [:total-quantity]   identity
+                      :RAExcess  [:AC-deployable]    identity
+                      :RCExcess  [:NG-deployable :RC-deployable] dfn/+
+                      :UnmetDemand [:RAFill :RCFill :Demand] normalized))))
+
+;;we just derive phase-length now. pretty trivial we just add phase-length
+;;column.
+(defn fat-shave-data [d phase]
+  (let [phased (by-phase d phase)
+        pl     (-> (phased :phase-length) first)
+        mean-t (fn [d k] (/ (dfn/mean (d k)) pl))]
+    (-> phased
+        (tc/group-by [:SRC :AC :NG :RC :phase])
+        ;;aggregate automatically ungroups.
+        (tc/aggregate {:Demand    (fn [{:keys [Demand]}] (/ (dfn/mean Demand) pl))
+                       :SupplyRA  (fn [{:keys [RAFill RAExcess]}]
+                                    (/ (+ (dfn/mean RAFill) (dfn/mean RAExcess)) pl))
+                       :SupplyRC  (fn [{:keys [RCFill RCExcess]}]
+                                    (/ (+ (dfn/mean RCFill) (dfn/mean RCExcess)) pl))
+                       ;;I don't think we actually need means here....constant values by phase.
+                       :RCTotal   (fn [{:keys [RC-total NG-total]}]
+                                    (/ (+ (dfn/mean RC-total) (dfn/mean NG-total)) pl))
+                       :phase-length (fn [_] pl)})
+        (map-columns* :TotalSupply [:SupplyRA :SupplyRC] dfn/+)
+        (tc/group-by [:SRC]) ;;it's possible this v fails if we dupes.
+        (tc/select-rows (fn [{:keys [AC maxac]}] (= AC maxac)) 
+                        {:pre {:maxac (fn [d] (apply dfn/max (d :AC)))}})
+        (tc/ungroup)
+        (map-columns* :UnmetDemand      [:Demand :TotalSupply] (fn [dem s] (max (- dem s) 0))
+                      :RCUnavailable    [:NG :RC :SupplyRC]  (fn [ng rc supplyrc] (max (- (+ ng rc) supplyrc)))
+                      :RApercent        [:SupplyRA :Demand]    dfn//
+                      :RCpercent        [:SupplyRA :Demand]    dfn//
+                      :UnmetPercent     [:UnmetDemand :Demand] dfn//
+                      :RCunavailpercent [:RCUnavailable :Demand] dfn//
+                      :Totalpercent     [:RApercent :RCpercent] dfn/+  ))))
 
 ;;we want to transform into normalized values.
 ;;For the bar chart, (RAFill + RAExcess)/Demand -> RASupply, RCFill + RCExcees -> RCSupply
