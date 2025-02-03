@@ -232,16 +232,16 @@
                        :phase-length (fn [_] pl)})
         (map-columns* :TotalSupply [:SupplyRA :SupplyRC] dfn/+)
         (tc/group-by [:SRC]) ;;it's possible this v fails if we dupes.
-        (tc/select-rows (fn [{:keys [AC maxac]}] (= AC maxac)) 
+        (tc/select-rows (fn [{:keys [AC maxac]}] (= AC maxac))
                         {:pre {:maxac (fn [d] (apply dfn/max (d :AC)))}})
         (tc/ungroup)
         (map-columns* :UnmetDemand      [:Demand :TotalSupply] (fn [dem s] (max (- dem s) 0))
-                      :RCUnavailable    [:NG :RC :SupplyRC]  (fn [ng rc supplyrc] (max (- (+ ng rc) supplyrc)))
+                      :RCUnavailable    [:NG :RC :SupplyRC]    (fn [ng rc supplyrc] (max (- (+ ng rc) supplyrc)))
                       :RApercent        [:SupplyRA :Demand]    safe-div
-                      :RCpercent        [:SupplyRA :Demand]    safe-div
+                      :RCpercent        [:SupplyRC :Demand]    safe-div
                       :UnmetPercent     [:UnmetDemand :Demand] safe-div
                       :RCunavailpercent [:RCUnavailable :Demand] safe-div
-                      :Totalpercent     [:RApercent :RCpercent] dfn/+  ))))
+                      :Totalpercent     [:RApercent :RCpercent]   dfn/+  ))))
 
 (defn round-prod [l r]  (dfn/round (dfn/* l r)))
 (def str-flds [:Demand :SupplyRA :SupplyRC :TotalSupply :UnmetDemand
@@ -250,7 +250,7 @@
   (->> (-> (tc/inner-join fat unit-detail [:SRC])
            (tc/rows :as-maps))
        (map (fn [{:keys [STR] :as r}]
-              (reduce (fn [acc k] (update acc k * STR)) r str-flds)))
+              (reduce (fn [acc k] (update acc k round-prod STR)) r str-flds)))
        tc/dataset))
 
 ;;we want to transform into normalized values.
@@ -264,12 +264,6 @@
      {:key-fn keyword :separator \tab}))
 
 (def unit-detail (read-unit-detail "../make-one-to-n/resources/SRC_BASELINE.xlsx"))
-
-
-
-
-
-
 
 #_
 (bar-chart (-> s1 second second) "phase3" 981)
@@ -314,3 +308,22 @@
                 :y {:datum 100}
                 :color {:value "red"}}}
     ]})
+
+;;possible convenience macros.
+;; (mapping UnmetDemand   (max (- ?Demand ?TotalSupply) 0)
+;;          RCUnavailable (max (- (+ ?NG ?RC) ?SupplyRC))
+;;          RApercent         safe-div
+;;          RCpercent         safe-div
+;;          UnmetPercent      safe-div
+;;          RCunavailpercent  safe-div
+;;          Totalpercent      dfn/+
+
+;; (mapping [RCUnavailable  (max (- (+ ?NG ?RC) ?SupplyRC))
+;;           SupplyRA       (/ (+ (dfn/mean ?RAFill) (dfn/mean ?RAExcess)) pl)
+;;           SupplyRC       (/ (+ (dfn/mean ?RCFill) (dfn/mean ?RCExcess)) pl)
+;;           ;;I don't think we actually need means here....constant values by phase.
+;;           RCTotal        (/ (+ (dfn/mean ?RC-total) (dfn/mean ?NG-total)) pl)
+;;           phase-length    pl])
+
+;; (defmacro deriving [bindings]
+;;   {:RCUnavailable  (max (- (+ ?NG ?RC) ?SupplyRC))})
