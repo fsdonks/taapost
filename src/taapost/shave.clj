@@ -284,11 +284,14 @@
 
 (def ph3 (phase-data dt unit-detail "phase3"))
 
+(def trend-order (-> [:RApercent :RCpercent :UnmetPercent :RCunavailpercent]
+                     (zipmap (range))))
 (defn pivot-trend [ds]
-  (-> (tc/pivot->longer ds [:RApercent :RCpercent :Totalpercent :UnmetPercent :RCunavailpercent]
+  (-> (tc/pivot->longer ds [:RApercent :RCpercent :UnmetPercent :RCunavailpercent]
                         {:target-columns :trend :value-column-name :value})
       (tc/drop-columns [:RApercent :RCpercent :Totalpercent :UnmetPercent :RCunavailpercent])
-      (tc/order-by [:SRC :phase :trend])))
+      (tc/order-by [:SRC :phase :trend])
+      (tc/map-columns :color-order [:trend] trend-order)))
 
 ;;Where does max demand factor in?  I know it matters for 1-n.
 ;;I think we pick the max for bar charts too.
@@ -298,16 +301,21 @@
    :title {:text  "Aviation-Aggregated modeling Results as Percentages of Demand"
            :subtitle "Conflict-Phase 3 Most Stressful Scenario"}
    :config {:background "lightgrey"}
-   :width 1080
+   :height 700
+   :width 1800
    :encoding
    {:x {:type "nominal", :field "SRC"
         :axis {:labels false :title nil}}
-    :y {:type "quantitative", :aggregate "sum", :field "value", :stack "zero" }},
+    :y {:type "quantitative", :aggregate "sum", :field "value", :stack "zero"
+        :scale {:domain  [0.0 2.5]}}},
    :layer
-   [{:mark {:type "bar" :binSpacing 20 :width 10},
+   [{:mark {:type "bar" :binSpacing 20 :width 20 :clip true :stroke "black"},
      :encoding {:color {:type "nominal", :field "trend"
                         :legend {:direction "horizontal"
-                                 :orient "bottom"}}}}
+                                 :orient "bottom"}
+                        :scale {:domain [:RApercent :RCpercent :UnmetPercent :RCunavailpercent]
+                                :range  ["#bdd7ee" "#c6e0b4" "#ffffb2" "white"] #_["blue" "green" "yellow" "white"]}}
+                :order {:field :color-order}}}
     #_
     {:mark {:type "text", :color "black", :dy -15, :dx 0},
      :encoding
@@ -315,13 +323,13 @@
       :text
       {:type "quantitative", :aggregate "sum", :field "yield", :format ".1f"}}}
     ;;title
-    {:mark {:type "text", :color "black", :dy 10, :dx 0 :angle -90 :align "left"},
+    {:mark {:type "text", :color "black", :dy 15, :dx 0 :angle -90 :align "left"},
      :encoding
      {;;:detail {:type "nominal", :field "TITLE"},
       :text    {:type "nominal", :field "TITLE"}
       :y  {:datum 0}}}
     ;;str
-    {:mark {:type "text", :color "black", :dy 20, :dx 0 :angle -90 :align "left"},
+    {:mark {:type "text", :color "black", :dy 25, :dx 0 :angle -90 :align "left"},
      :encoding
      {;:detail {:type "nominal", :field "variety"},
       :text    {:type "nominal", :field "STR"}
