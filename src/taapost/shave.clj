@@ -6,7 +6,8 @@
             [aerial.hanami.templates :as ht]
             [tablecloth.api :as tc]
             [tech.v3.datatype.functional :as dfn]
-            [tech.v3.libs.fastexcel]))
+            [tech.v3.libs.fastexcel]
+            [clojure.string :as s]))
 
 (defn unjson [in]
   (w/postwalk
@@ -207,11 +208,20 @@
 ;;TODO - snuff this out...
 (def str-flds [:Demand :SupplyRA :SupplyRC :TotalSupply :UnmetDemand
                :RCTotal :RCUnavailable])
+
+(defn pax-label  [AC NG RC STR]
+  (let [[ac ng rc] (mapv #(let [n (/ (* % STR) 1000.0)]
+                            (cond (zero? %) "0K"
+                                  (zero? (long n)) (format "%.1fK" n)
+                                  :else (format "%dK" (long n)))) [AC NG RC])]
+    (str "(" (s/join ", " [ac ng rc]) ")")))
+
 (defn join-and-clean [fat unit-detail]
   (->> (-> (tc/inner-join fat unit-detail [:SRC])
+           (tc/map-columns :PaxLabel [:AC :NG :RC :STR] pax-label)
            (tc/rows :as-maps))
        (map (fn [{:keys [STR] :as r}]
-              (reduce (fn [acc k] (update acc k round-prod STR)) r str-flds)))
+              (reduce (fn [acc k] (update acc k round-prod STR)) r str-flds))) ;;may not need this!
        tc/dataset))
 
 ;;we want to transform into normalized values.
@@ -252,6 +262,7 @@
    {:x {:type "nominal", :field "SRC"
         :axis {:labels false :title nil}}
     :y {:type "quantitative", :aggregate "sum", :field "value", :stack "zero"
+        :title "%Demand"
         :scale {:domain  [0.0 2.5]}
         :axis {:format ".0%"}}},
    :layer
@@ -272,7 +283,7 @@
     {:mark {:type "text", :color "black", :dy 25, :dx 0 :angle -90 :align "left"},
      :encoding
      {;:detail {:type "nominal", :field "variety"},
-      :text    {:type "nominal", :field "STR"}
+      :text    {:type "nominal", :field "PaxLabel"}
       :y  {:datum 0}}}
     ;;demand met
     {:mark {:type "text", :color "black", :dy 15, :dx 0 :angle -90 :align "left"},
@@ -295,6 +306,8 @@
                  (merge {:title {:text title :subtitle subtitle}}))]
     (oz/view! [:vega-lite spec])))
 
+;;campaigning/comp and branch views.
+
 (comment
   ;;sample data
   (def dt
@@ -307,7 +320,9 @@
 
   (def trend-order (-> [:RApercent :RCpercent :UnmetPercent :RCunavailpercent]
                        (zipmap (range))))
-  (render-bars  (->  ph3 pivot-trend records vec)))
+  (render-bars  (->  ph3 pivot-trend records vec)
+      :title "Aviation-Aggregated modeling Results as Percentages of Demand"
+      :subtitle "Conflict-Phase 3 Most Stressful Scenario"))
 #_
 (def pats
   [:svg
@@ -334,4 +349,21 @@
 
 ;; (defmacro deriving [bindings]
 ;;   {:RCUnavailable  (max (- (+ ?NG ?RC) ?SupplyRC))})
+
+;;campaign availability will be entirely a
+;;function of RC readiness....
+;;if we count excess demand...assume uniform distribution
+(defn init-supply [ac rc]
+  {:ac (vec (repeatedly ac #(rand-int 960)))
+   :rc (vec (repeatedly rc #(rand-int 2010)))})
+
+(defn advance [ct clength t]
+  (mod (+ ct t) clength))
+
+(defn supply-at [{:keys [ac rc]} t]
+  {:ac (->> ac (mapv (fn [ct] (advance ct 960 t))))
+   :rc (->> rc (mapv (fn [ct] (advance ct 2010 t))))})
+
+
+;;transform
 
