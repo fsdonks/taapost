@@ -17,47 +17,6 @@
 
 (defn records [ds] (tc/rows ds :as-maps))
 
-(def stacked-vl
-  {:data {:url "https://raw.githubusercontent.com/vega/vega/refs/heads/main/docs/data/barley.json"},
-   :title {:text  "Aviation-Aggregated modeling Results as Percentages of Demand"
-           :subtitle "Conflict-Phase 3 Most Stressful Scenario"}
-   :config {:background "lightgrey"}
-   :width 800
-   :encoding
-   {:x {:type "nominal", :field "variety"
-        :axis {:labels false :title nil}}
-    :y {:type "quantitative", :aggregate "sum", :field "yield", :stack "zero" }},
-   :layer
-   [{:mark {:type "bar" :binSpacing 20 :width 20},
-     :encoding {:color {:type "nominal", :field "site"
-                        :legend {:direction "horizontal"
-                                 :orient "bottom"}}}}
-    #_
-    {:mark {:type "text", :color "black", :dy -15, :dx 0},
-     :encoding
-     {:detail {:type "nominal", :field "site"},
-      :text
-      {:type "quantitative", :aggregate "sum", :field "yield", :format ".1f"}}}
-    ;;title
-    {:mark {:type "text", :color "black", :dy 10, :dx 0 :angle -90 :align "left"},
-     :encoding
-     {:detail {:type "nominal", :field "variety"},
-      :text    {:type "nominal", :field "variety"}
-      :y  {:datum 0}}}
-    ;;str
-    {:mark {:type "text", :color "black", :dy 20, :dx 0 :angle -90 :align "left"},
-     :encoding
-     {;:detail {:type "nominal", :field "variety"},
-      :text    {:type "nominal", :field "variety"}
-      :y  {:datum 0}}}
-    ;;rule.
-    {:mark "rule"
-     :encoding {:x nil ;;this works but I'm not happy.
-                :y {:datum 100}
-                :color {:value "red"}}}
-    ]})
-
-
 ;;Shave charts are produced for 2 subviews:
 ;;Campaigning, Phase3.
 ;;Only for a single level of supply (statically at least).
@@ -110,11 +69,6 @@
                                                  (= RC rc-max)
                                                  (= NG ng-max))))]
       [SRC supply])))
-
-;;Generate bar charts by phases....
-;;just get data for one phase.
-#_
-(def d (tc/dataset "../make-one-to-n/resources/results_4_SRCs.csv" {:key-fn keyword}))
 
 ;;given a subdataset for a max supply, we want to grab the phases of interest.
 ;;generate a bar chart for each phase.
@@ -275,29 +229,20 @@
 (defn phase-data [results unit-detail phase]
   (join-and-clean (fat-shave-data (stylize results) phase) unit-detail))
 
-;;sample data
-(def dt
-  (tc/dataset "../make-one-to-n/resources/results_no_truncation.txt"
-              {:key-fn keyword :separator \tab}))
-
-(def unit-detail (read-unit-detail "../make-one-to-n/resources/SRC_BASELINE.xlsx"))
-
-(def ph3 (phase-data dt unit-detail "phase3"))
-
-(def trend-order (-> [:RApercent :RCpercent :UnmetPercent :RCunavailpercent]
-                     (zipmap (range))))
 (defn pivot-trend [ds]
   (-> (tc/pivot->longer ds [:RApercent :RCpercent :UnmetPercent :RCunavailpercent]
                         {:target-columns :trend :value-column-name :value})
-      (tc/drop-columns [:RApercent :RCpercent :Totalpercent :UnmetPercent :RCunavailpercent])
+      (tc/drop-columns [:RApercent :RCpercent :UnmetPercent :RCunavailpercent])
       (tc/order-by [:SRC :phase :trend])
-      (tc/map-columns :color-order [:trend] trend-order)))
+      (map-columns* :color-order [:trend] trend-order
+                    :DemandMet   [:Totalpercent] (fn [e] (str "Demand Met: "
+                                                              (format "%.0f" (* e 100)) "%")))))
 
 ;;Where does max demand factor in?  I know it matters for 1-n.
 ;;I think we pick the max for bar charts too.
 
 (def shave-base
-  {:data {:url "https://raw.githubusercontent.com/vega/vega/refs/heads/main/docs/data/barley.json"},
+  {:data {},
    :title {:text  "Aviation-Aggregated modeling Results as Percentages of Demand"
            :subtitle "Conflict-Phase 3 Most Stressful Scenario"}
    :config {:background "lightgrey"}
@@ -307,21 +252,16 @@
    {:x {:type "nominal", :field "SRC"
         :axis {:labels false :title nil}}
     :y {:type "quantitative", :aggregate "sum", :field "value", :stack "zero"
-        :scale {:domain  [0.0 2.5]}}},
+        :scale {:domain  [0.0 2.5]}
+        :axis {:format ".0%"}}},
    :layer
    [{:mark {:type "bar" :binSpacing 20 :width 20 :clip true :stroke "black"},
      :encoding {:color {:type "nominal", :field "trend"
                         :legend {:direction "horizontal"
                                  :orient "bottom"}
                         :scale {:domain [:RApercent :RCpercent :UnmetPercent :RCunavailpercent]
-                                :range  ["#bdd7ee" "#c6e0b4" "#ffffb2" "white"] #_["blue" "green" "yellow" "white"]}}
+                                :range  ["#bdd7ee" "#c6e0b4" "#ffffb2" "white"]}}
                 :order {:field :color-order}}}
-    #_
-    {:mark {:type "text", :color "black", :dy -15, :dx 0},
-     :encoding
-     {:detail {:type "nominal", :field "site"},
-      :text
-      {:type "quantitative", :aggregate "sum", :field "yield", :format ".1f"}}}
     ;;title
     {:mark {:type "text", :color "black", :dy 15, :dx 0 :angle -90 :align "left"},
      :encoding
@@ -334,6 +274,12 @@
      {;:detail {:type "nominal", :field "variety"},
       :text    {:type "nominal", :field "STR"}
       :y  {:datum 0}}}
+    ;;demand met
+    {:mark {:type "text", :color "black", :dy 15, :dx 0 :angle -90 :align "left"},
+     :encoding
+     {;;:detail {:type "nominal", :field "TITLE"},
+      :text    {:type "nominal", :field "DemandMet"}
+      :y  {:datum 1.5}}}
     ;;rule.
     {:mark "rule"
      :encoding {:x nil ;;this works but I'm not happy.
@@ -341,9 +287,34 @@
                 :color {:value "red"}}}
     ]})
 
-#_
-(oz/view! (assoc-in shave-base [:data :values] (->  ph3 pivot-trend records vec)))
+(defn render-bars [data & {:keys [title subtitle]
+                           :or {title "The Title"
+                                subtitle "The SubTitle"}}]
+  (let [spec (-> shave-base
+                 (assoc-in [:data :values] data)
+                 (merge {:title {:text title :subtitle subtitle}}))]
+    (oz/view! [:vega-lite spec])))
 
+(comment
+  ;;sample data
+  (def dt
+    (tc/dataset "../make-one-to-n/resources/results_no_truncation.txt"
+                {:key-fn keyword :separator \tab}))
+
+  (def unit-detail (read-unit-detail "../make-one-to-n/resources/SRC_BASELINE.xlsx"))
+
+  (def ph3 (phase-data dt unit-detail "phase3"))
+
+  (def trend-order (-> [:RApercent :RCpercent :UnmetPercent :RCunavailpercent]
+                       (zipmap (range))))
+  (render-bars  (->  ph3 pivot-trend records vec)))
+#_
+(def pats
+  [:svg
+   [:defs
+    [:pattern {:id "diagonalHatch" :patternUnits "userSpaceOnUse"
+               :width "4" :height "4" :patternTransform "rotate(45 2 2)"}
+     [:path {:d "M -1,2 l 6,0" :stroke "#000000" :stroke-width "1" }]]]])
 
 ;;possible convenience macros.
 ;; (mapping UnmetDemand   (max (- ?Demand ?TotalSupply) 0)
@@ -363,3 +334,4 @@
 
 ;; (defmacro deriving [bindings]
 ;;   {:RCUnavailable  (max (- (+ ?NG ?RC) ?SupplyRC))})
+
