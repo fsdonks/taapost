@@ -284,7 +284,7 @@
                         :legend {:direction "horizontal"
                                  :orient "bottom"}
                         :scale {:domain [:RApercent :RCpercent :UnmetOverlapPercent :UnmetPercent :RCunavailpercent]
-                                :range  ["#bdd7ee" "#c6e0b4" "#ffffb2" "#ffffb2" "white"]}}
+                                :range  ["#bdd7ee" "#c6e0b4" "#ffffef" #_"#99996a" "#ffffb2" "white"]}}
                 :order {:field :color-order}}}
     ;;title
     {:mark {:type "text", :color "black", :dy 15, :dx 0 :angle -90 :align "left"},
