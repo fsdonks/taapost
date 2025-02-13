@@ -319,26 +319,7 @@
                  (merge {:title {:text title :subtitle subtitle}}))]
     (oz/view! [:vega-lite spec])))
 
-;;campaigning/comp and branch views.
-
-(comment
-  ;;sample data
-  (def dt
-    (tc/dataset "../make-one-to-n/resources/results_no_truncation.txt"
-                {:key-fn keyword :separator \tab}))
-
-  (def unit-detail (read-unit-detail "../make-one-to-n/resources/SRC_BASELINE.xlsx"))
-
-  (def ph3 (phase-data dt unit-detail "phase3"))
-
-  (render-bars  (->  ph3 pivot-trend records vec)
-      :title "Aviation-Aggregated modeling Results as Percentages of Demand"
-      :subtitle "Conflict-Phase 3 Most Stressful Scenario")
-
-  (render-bars2  (->  ph3 pivot-trend records vec)
-      :title "Aviation-Aggregated modeling Results as Percentages of Demand"
-      :subtitle "Conflict-Phase 3 Most Stressful Scenario"))
-
+;;We can move these elsewhere...
 ;;per https://groups.google.com/g/vega-js/c/_3JwxvraWCQ/m/WGERWhqfBgAJ
 ;;we can get fill patterns in.
 (def pats
@@ -409,24 +390,27 @@
     (oz/view! [:div pats
                [:vega-lite  spec  { :renderer :svg}]])))
 
-;;possible convenience macros.
-;; (mapping UnmetDemand   (max (- ?Demand ?TotalSupply) 0)
-;;          RCUnavailable (max (- (+ ?NG ?RC) ?SupplyRC))
-;;          RApercent         safe-div
-;;          RCpercent         safe-div
-;;          UnmetPercent      safe-div
-;;          RCunavailpercent  safe-div
-;;          Totalpercent      dfn/+
 
-;; (mapping [RCUnavailable  (max (- (+ ?NG ?RC) ?SupplyRC))
-;;           SupplyRA       (/ (+ (dfn/mean ?RAFill) (dfn/mean ?RAExcess)) pl)
-;;           SupplyRC       (/ (+ (dfn/mean ?RCFill) (dfn/mean ?RCExcess)) pl)
-;;           ;;I don't think we actually need means here....constant values by phase.
-;;           RCTotal        (/ (+ (dfn/mean ?RC-total) (dfn/mean ?NG-total)) pl)
-;;           phase-length    pl])
+;;campaigning/comp and branch views.
 
-;; (defmacro deriving [bindings]
-;;   {:RCUnavailable  (max (- (+ ?NG ?RC) ?SupplyRC))})
+(comment
+  ;;sample data
+  (def dt
+    (tc/dataset "../make-one-to-n/resources/results_no_truncation.txt"
+                {:key-fn keyword :separator \tab}))
+
+  (def unit-detail (read-unit-detail "../make-one-to-n/resources/SRC_BASELINE.xlsx"))
+
+  (def ph3 (phase-data dt unit-detail "phase3"))
+
+  (render-bars  (->  ph3 pivot-trend records vec)
+                :title "Aviation-Aggregated modeling Results as Percentages of Demand"
+                :subtitle "Conflict-Phase 3 Most Stressful Scenario")
+
+  (render-bars2  (->  ph3 pivot-trend records vec)
+                 :title "Aviation-Aggregated modeling Results as Percentages of Demand"
+                 :subtitle "Conflict-Phase 3 Most Stressful Scenario"))
+
 
 ;;campaign availability will be entirely a
 ;;function of RC readiness....
@@ -475,3 +459,22 @@
                  (assoc-in [:data :values] data)
                  (merge {:title {:text title :subtitle subtitle}}))]
     (oz.headless/render spec "bars.png" :pre-raster (fn [svg] (inject-patterns svg pats)))))
+
+;;possible convenience macros.
+;; (mapping UnmetDemand   (max (- ?Demand ?TotalSupply) 0)
+;;          RCUnavailable (max (- (+ ?NG ?RC) ?SupplyRC))
+;;          RApercent         safe-div
+;;          RCpercent         safe-div
+;;          UnmetPercent      safe-div
+;;          RCunavailpercent  safe-div
+;;          Totalpercent      dfn/+
+
+;; (mapping [RCUnavailable  (max (- (+ ?NG ?RC) ?SupplyRC))
+;;           SupplyRA       (/ (+ (dfn/mean ?RAFill) (dfn/mean ?RAExcess)) pl)
+;;           SupplyRC       (/ (+ (dfn/mean ?RCFill) (dfn/mean ?RCExcess)) pl)
+;;           ;;I don't think we actually need means here....constant values by phase.
+;;           RCTotal        (/ (+ (dfn/mean ?RC-total) (dfn/mean ?NG-total)) pl)
+;;           phase-length    pl])
+
+;; (defmacro deriving [bindings]
+;;   {:RCUnavailable  (max (- (+ ?NG ?RC) ?SupplyRC))})
