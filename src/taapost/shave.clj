@@ -170,6 +170,14 @@
 
 ;;preclude divide by zero errors.
 (defn safe-div [x y] (if (zero? y) 0 (dfn// x y)))
+;;ported from the goof shave chart stuff...
+(defn adjust-demand [{:keys [UnmetPercent  RCunavailpercent]}]
+  (let [overlap (if (<= UnmetPercent RCunavailpercent)
+                  UnmetPercent
+                  RCunavailpercent)]
+    {:UnmetOverlapPercent       overlap
+     :UnmetPercent     (- UnmetPercent overlap)
+     :RCunavailpercent (- RCunavailpercent overlap)}))
 
 ;;how different is this to the BCD scripts?
 ;;fat is supposed to refer to bar width, which was controlled
@@ -201,7 +209,9 @@
                       :RCpercent        [:SupplyRC :Demand]    safe-div
                       :UnmetPercent     [:UnmetDemand :Demand] safe-div
                       :RCunavailpercent [:RCUnavailable :Demand] safe-div
-                      :Totalpercent     [:RApercent :RCpercent]   dfn/+  ))))
+                      :Totalpercent     [:RApercent :RCpercent]   dfn/+)
+        ;;tack on cols for UnmetOverlap Unmetpercent RCunavailpercent
+        (tc/map-rows adjust-demand))))
 
 (defn round-prod [l r]  (dfn/round (dfn/* l r)))
 ;;why do we need to mult by str here?
@@ -239,10 +249,13 @@
 (defn phase-data [results unit-detail phase]
   (join-and-clean (fat-shave-data (stylize results) phase) unit-detail))
 
+(def trend-order (-> [:RApercent :RCpercent :UnmetOverlapPercent :UnmetPercent :RCunavailpercent]
+                     (zipmap (range))))
+
 (defn pivot-trend [ds]
-  (-> (tc/pivot->longer ds [:RApercent :RCpercent :UnmetPercent :RCunavailpercent]
+  (-> (tc/pivot->longer ds [:RApercent :RCpercent :UnmetOverlapPercent :UnmetPercent :RCunavailpercent]
                         {:target-columns :trend :value-column-name :value})
-      (tc/drop-columns [:RApercent :RCpercent :UnmetPercent :RCunavailpercent])
+      (tc/drop-columns [:RApercent :RCpercent :UnmetPercent :RCunavailpercent :UnmetOverlapPercent])
       (tc/order-by [:SRC :phase :trend])
       (map-columns* :color-order [:trend] trend-order
                     :DemandMet   [:Totalpercent] (fn [e] (str "Demand Met: "
@@ -270,8 +283,8 @@
      :encoding {:color {:type "nominal", :field "trend"
                         :legend {:direction "horizontal"
                                  :orient "bottom"}
-                        :scale {:domain [:RApercent :RCpercent :UnmetPercent :RCunavailpercent]
-                                :range  ["#bdd7ee" "#c6e0b4" "#ffffb2" "white"]}}
+                        :scale {:domain [:RApercent :RCpercent :UnmetOverlapPercent :UnmetPercent :RCunavailpercent]
+                                :range  ["#bdd7ee" "#c6e0b4" "#ffffb2" "#ffffb2" "white"]}}
                 :order {:field :color-order}}}
     ;;title
     {:mark {:type "text", :color "black", :dy 15, :dx 0 :angle -90 :align "left"},
@@ -318,18 +331,83 @@
 
   (def ph3 (phase-data dt unit-detail "phase3"))
 
-  (def trend-order (-> [:RApercent :RCpercent :UnmetPercent :RCunavailpercent]
-                       (zipmap (range))))
   (render-bars  (->  ph3 pivot-trend records vec)
       :title "Aviation-Aggregated modeling Results as Percentages of Demand"
+      :subtitle "Conflict-Phase 3 Most Stressful Scenario")
+
+  (render-bars2  (->  ph3 pivot-trend records vec)
+      :title "Aviation-Aggregated modeling Results as Percentages of Demand"
       :subtitle "Conflict-Phase 3 Most Stressful Scenario"))
-#_
+
+;;per https://groups.google.com/g/vega-js/c/_3JwxvraWCQ/m/WGERWhqfBgAJ
+;;we can get fill patterns in.
 (def pats
-  [:svg
-   [:defs
-    [:pattern {:id "diagonalHatch" :patternUnits "userSpaceOnUse"
-               :width "4" :height "4" :patternTransform "rotate(45 2 2)"}
-     [:path {:d "M -1,2 l 6,0" :stroke "#000000" :stroke-width "1" }]]]])
+  [:svg {:height "0" :width "0"}
+   [:defs [:pattern {:id "circles-1" :patternUnits "userSpaceOnUse" :width "10" :height "10"}
+           [:image {:href "data:image/svg+xml;base64,PHN2ZyB4bWxucz0naHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmcnIHdpZHRoPScxMCcgaGVpZ2h0PScxMCc+CiAgPHJlY3Qgd2lkdGg9JzEwJyBoZWlnaHQ9JzEwJyBmaWxsPSJ3aGl0ZSIgLz4KICA8Y2lyY2xlIGN4PSIxIiBjeT0iMSIgcj0iMSIgZmlsbD0iYmxhY2siLz4KPC9zdmc+"
+                    :x "0" :y "0" :width "10" :height "10"}]]
+    [:pattern {:id "diagonal-stripe-2" :patternUnits "userSpaceOnUse" :width "10" :height "10"}
+     [:image {:href "data:image/svg+xml;base64,PHN2ZyB4bWxucz0naHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmcnIHdpZHRoPScxMCcgaGVpZ2h0PScxMCc+CiAgPHJlY3Qgd2lkdGg9JzEwJyBoZWlnaHQ9JzEwJyBmaWxsPSd3aGl0ZScvPgogIDxwYXRoIGQ9J00tMSwxIGwyLC0yCiAgICAgICAgICAgTTAsMTAgbDEwLC0xMAogICAgICAgICAgIE05LDExIGwyLC0yJyBzdHJva2U9J2JsYWNrJyBzdHJva2Utd2lkdGg9JzInLz4KPC9zdmc+"
+              :x "0" :y "0" :width "10" :height "10"}]]
+    [:pattern {:id "yellow-crosshatch"  :patternUnits "userSpaceOnUse" :width "8" :height "8"}
+     [:svg {:width "8" :height "8"}
+      [:rect {:width "8" :height "8" :fill "#ffffb2" :stroke "#000000" }
+       [:path {:d "M0 0L8 8ZM8 0L0 8Z" :stroke-width "0.5"  :stroke "#000000"}]]]]]])
+
+(def shave-pat
+  {:data {},
+   :title {:text  "Aviation-Aggregated modeling Results as Percentages of Demand"
+           :subtitle "Conflict-Phase 3 Most Stressful Scenario"}
+   :config {:background "lightgrey"}
+   :height 700
+   :width 1800
+   :encoding
+   {:x {:type "nominal", :field "SRC"
+        :axis {:labels false :title nil}}
+    :y {:type "quantitative", :aggregate "sum", :field "value", :stack "zero"
+        :title "%Demand"
+        :scale {:domain  [0.0 2.5]}
+        :axis {:format ".0%"}}},
+   :layer
+   [{:mark {:type "bar" :binSpacing 20 :width 20 :clip true :stroke "black"},
+     :encoding {:color {:type "nominal", :field "trend"
+                        :legend {:direction "horizontal" :orient "bottom"}
+                        :scale {:domain [:RApercent :RCpercent :UnmetOverlapPercent :UnmetPercent :RCunavailpercent]
+                                :range  ["#bdd7ee" "#c6e0b4"  "url(#yellow-crosshatch)" "#ffffb2" "white"]}}
+                :order {:field :color-order}}}
+    ;;title
+    {:mark {:type "text", :color "black", :dy 15, :dx 0 :angle -90 :align "left"},
+     :encoding
+     {;;:detail {:type "nominal", :field "TITLE"},
+      :text    {:type "nominal", :field "TITLE"}
+      :y  {:datum 0}}}
+    ;;str
+    {:mark {:type "text", :color "black", :dy 25, :dx 0 :angle -90 :align "left"},
+     :encoding
+     {;:detail {:type "nominal", :field "variety"},
+      :text    {:type "nominal", :field "PaxLabel"}
+      :y  {:datum 0}}}
+    ;;demand met
+    {:mark {:type "text", :color "black", :dy 15, :dx 0 :angle -90 :align "left"},
+     :encoding
+     {;;:detail {:type "nominal", :field "TITLE"},
+      :text    {:type "nominal", :field "DemandMet"}
+      :y  {:datum 1.5}}}
+    ;;rule.
+    {:mark "rule"
+     :encoding {:x nil ;;this works but I'm not happy.
+                :y {:datum 1.0}
+                :color {:value "red"}}}
+    ]})
+
+(defn render-bars2 [data & {:keys [title subtitle]
+                           :or {title "The Title"
+                                subtitle "The SubTitle"}}]
+  (let [spec (-> shave-pat
+                 (assoc-in [:data :values] data)
+                 (merge {:title {:text title :subtitle subtitle}}))]
+    (oz/view! [:div pats
+               [:vega-lite  spec  { :renderer :svg}]])))
 
 ;;possible convenience macros.
 ;; (mapping UnmetDemand   (max (- ?Demand ?TotalSupply) 0)
@@ -353,17 +431,17 @@
 ;;campaign availability will be entirely a
 ;;function of RC readiness....
 ;;if we count excess demand...assume uniform distribution
-(defn init-supply [ac rc]
-  {:ac (vec (repeatedly ac #(rand-int 960)))
-   :rc (vec (repeatedly rc #(rand-int 2010)))})
+(comment
+  (defn init-supply [ac rc]
+    {:ac (vec (repeatedly ac #(rand-int 960)))
+     :rc (vec (repeatedly rc #(rand-int 2010)))})
 
-(defn advance [ct clength t]
-  (mod (+ ct t) clength))
+  (defn advance [ct clength t]
+    (mod (+ ct t) clength))
 
-(defn supply-at [{:keys [ac rc]} t]
-  {:ac (->> ac (mapv (fn [ct] (advance ct 960 t))))
-   :rc (->> rc (mapv (fn [ct] (advance ct 2010 t))))})
-
+  (defn supply-at [{:keys [ac rc]} t]
+    {:ac (->> ac (mapv (fn [ct] (advance ct 960 t))))
+     :rc (->> rc (mapv (fn [ct] (advance ct 2010 t))))}))
 
 ;;transform
 
