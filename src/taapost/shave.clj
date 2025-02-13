@@ -445,3 +445,33 @@
 
 ;;transform
 
+(comment
+  ;;roz patches...
+  (in-ns 'oz.headless)
+  (defn render [from to & {:keys [pre-raster] :or {pre-raster identity}}]
+    (let [spec (if (map? from) (json/encode from) (oz/load from))]
+      (->  spec
+           str
+           darkstar/vega-lite-spec->svg
+           pre-raster
+           b/parse-svg-string
+           (b/render-svg-document to))))
+  (in-ns 'taapost.shave)
+  (require [hiccup.core :as hc])
+  )
+
+
+(def pre (slurp "preamble.txt"))
+
+(defn inject-patterns [svg pats]
+  (let [head (re-find #"<svg.+/xlink.+>" pre)]
+    (clojure.string/replace svg head (str head (hc/html pats)))))
+
+;;we'll try to include our hatched thing here..
+(defn emit-bars2 [data & {:keys [title subtitle]
+                          :or {title "The Title"
+                               subtitle "The SubTitle"}}]
+  (let [spec (-> shave-pat
+                 (assoc-in [:data :values] data)
+                 (merge {:title {:text title :subtitle subtitle}}))]
+    (oz.headless/render spec "bars.png" :pre-raster (fn [svg] (inject-patterns svg pats)))))
