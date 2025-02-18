@@ -4,10 +4,12 @@
             [oz [core :as oz] [headless :as h]]
             [scicloj.tableplot.v1.hanami :as hanami]
             [aerial.hanami.templates :as ht]
+            [hiccup.core :as hc]
             [tablecloth.api :as tc]
             [tech.v3.datatype.functional :as dfn]
             [tech.v3.libs.fastexcel]
-            [clojure.string :as s]))
+            [clojure.string :as s]
+            [taapost.patch]))
 
 (defn unjson [in]
   (w/postwalk
@@ -330,9 +332,9 @@
     [:pattern {:id "diagonal-stripe-2" :patternUnits "userSpaceOnUse" :width "10" :height "10"}
      [:image {:href "data:image/svg+xml;base64,PHN2ZyB4bWxucz0naHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmcnIHdpZHRoPScxMCcgaGVpZ2h0PScxMCc+CiAgPHJlY3Qgd2lkdGg9JzEwJyBoZWlnaHQ9JzEwJyBmaWxsPSd3aGl0ZScvPgogIDxwYXRoIGQ9J00tMSwxIGwyLC0yCiAgICAgICAgICAgTTAsMTAgbDEwLC0xMAogICAgICAgICAgIE05LDExIGwyLC0yJyBzdHJva2U9J2JsYWNrJyBzdHJva2Utd2lkdGg9JzInLz4KPC9zdmc+"
               :x "0" :y "0" :width "10" :height "10"}]]
-    [:pattern {:id "yellow-crosshatch"  :patternUnits "userSpaceOnUse" :width "8" :height "8"}
-     [:svg {:width "8" :height "8"}
-      [:rect {:width "8" :height "8" :fill "#ffffb2" :stroke "#000000" }
+    [:pattern {:id "yellow-crosshatch"  :patternUnits "userSpaceOnUse" :width "8" :height "8" }
+     [:svg {:width "8" :height "8" }
+      [:rect {:width "8" :height "8" :fill "#ffffb2" :stroke "#000000" #_#_:transform "rotate(45)"}
        [:path {:d "M0 0L8 8ZM8 0L0 8Z" :stroke-width "0.5"  :stroke "#000000"}]]]]]])
 
 (def shave-pat
@@ -428,22 +430,6 @@
      :rc (->> rc (mapv (fn [ct] (advance ct 2010 t))))}))
 
 ;;transform
-
-(comment
-  ;;roz patches...
-  (in-ns 'oz.headless)
-  (defn render [from to & {:keys [pre-raster] :or {pre-raster identity}}]
-    (let [spec (if (map? from) (json/encode from) (oz/load from))]
-      (->  spec
-           str
-           darkstar/vega-lite-spec->svg
-           pre-raster
-           b/parse-svg-string
-           (b/render-svg-document to))))
-  (in-ns 'taapost.shave)
-  (require [hiccup.core :as hc])
-  )
-
 
 (def pre (slurp "preamble.txt"))
 
