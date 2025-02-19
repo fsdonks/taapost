@@ -461,10 +461,10 @@
         width (or (spec :width) width)
         n (->> data (map :SRC) distinct count)
         k (/ width  (+ n 2)) ;;this is how we can divide the space.
-        bar-width k ;(- k 20) ;;need at least 10 for the labels.
+        bar-width (- k 20) ;;need at least 10 for the labels.
         hw        (/ bar-width 2.0)
-        txt1      (+ hw 5)
-        txt2      (+ txt1 10)
+        txt1      (+ hw 7)
+        txt2      (+ txt1 9)
         push (fn [m v] (assoc m :value v))
         params [(push barwidth (long bar-width))
                 (push txt1offset (long txt1))
