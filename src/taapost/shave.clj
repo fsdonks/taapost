@@ -271,8 +271,11 @@
    :title {:text  "Aviation-Aggregated modeling Results as Percentages of Demand"
            :subtitle "Conflict-Phase 3 Most Stressful Scenario"}
    :config {:background "lightgrey"}
+   :autosize {
+    :type "fit"
+    :contains "padding"}
    :height 700
-   :width 1800
+   ;;:width 1800
    :encoding
    {:x {:type "nominal", :field "SRC"
         :axis {:labels false :title nil}}
@@ -332,10 +335,14 @@
     [:pattern {:id "diagonal-stripe-2" :patternUnits "userSpaceOnUse" :width "10" :height "10"}
      [:image {:href "data:image/svg+xml;base64,PHN2ZyB4bWxucz0naHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmcnIHdpZHRoPScxMCcgaGVpZ2h0PScxMCc+CiAgPHJlY3Qgd2lkdGg9JzEwJyBoZWlnaHQ9JzEwJyBmaWxsPSd3aGl0ZScvPgogIDxwYXRoIGQ9J00tMSwxIGwyLC0yCiAgICAgICAgICAgTTAsMTAgbDEwLC0xMAogICAgICAgICAgIE05LDExIGwyLC0yJyBzdHJva2U9J2JsYWNrJyBzdHJva2Utd2lkdGg9JzInLz4KPC9zdmc+"
               :x "0" :y "0" :width "10" :height "10"}]]
-    [:pattern {:id "yellow-crosshatch"  :patternUnits "userSpaceOnUse" :width "8" :height "8" }
+    [:pattern {:id "yellow-crosshatch"  :patternUnits "userSpaceOnUse" :width "8" :height "8"
+               :patternTransform "rotate(45 0 0)" }
      [:svg {:width "8" :height "8" }
-      [:rect {:width "8" :height "8" :fill "#ffffb2" :stroke "#000000" #_#_:transform "rotate(45)"}
+      [:rect {:width "8" :height "8" :fill "#ffffb2" :stroke "#000000"}
        [:path {:d "M0 0L8 8ZM8 0L0 8Z" :stroke-width "0.5"  :stroke "#000000"}]]]]]])
+
+(defn ar [pw ph h]
+  [(* h (/ pw ph) 1.0) h])
 
 (def shave-pat
   {:data {},
@@ -344,6 +351,61 @@
    :config {:background "lightgrey"}
    :height 700
    :width 1800
+   :autosize {:type "fit"
+              :contains "padding"}
+   ;;compute variable widths....
+   :params [{:name "barwidth"   :value 20} ;;translate to 10 halfwidth...
+            {:name "txt1offset" :value 15}
+            {:name "txt2offset" :value 25}]
+   :encoding
+   {:x {:type "nominal", :field "SRC"
+        :axis {:labels false :title nil}}
+    :y {:type "quantitative", :aggregate "sum", :field "value", :stack "zero"
+        :title "%Demand"
+        :scale {:domain  [0.0 2.5]}
+        :axis {:format ".0%"}}},
+   :layer
+   [{:mark {:type "bar" :binSpacing 22  :width {:expr "barwidth"}
+            :clip true :stroke "black"},
+     :encoding {:color {:type "nominal", :field "trend"
+                        :legend {:direction "horizontal" :orient "bottom"}
+                        :scale {:domain [:RApercent :RCpercent :UnmetOverlapPercent :UnmetPercent :RCunavailpercent]
+                                :range  ["#bdd7ee" "#c6e0b4"  "url(#yellow-crosshatch)" "#ffffb2" "white"]}}
+                :order {:field :color-order}}}
+    ;;title
+    {:mark {:type "text", :color "black", :dy {:expr "txt1offset"}, :dx 0 :angle -90 :align "left"},
+     :encoding
+     {;;:detail {:type "nominal", :field "TITLE"},
+      :text    {:type "nominal", :field "TITLE"}
+      :y  {:datum 0}}}
+    ;;str
+    {:mark {:type "text", :color "black", :dy {:expr "txt2offset"} , :dx 0 :angle -90 :align "left"},
+     :encoding
+     {;:detail {:type "nominal", :field "variety"},
+      :text    {:type "nominal", :field "PaxLabel"}
+      :y  {:datum 0}}}
+    ;;demand met
+    {:mark {:type "text", :color "black", :dy {:expr "txt1offset"} , :dx 0 :angle -90 :align "left"},
+     :encoding
+     {;;:detail {:type "nominal", :field "TITLE"},
+      :text    {:type "nominal", :field "DemandMet"}
+      :y  {:datum 1.5}}}
+    ;;rule.
+    {:mark "rule"
+     :encoding {:x nil ;;this works but I'm not happy.
+                :y {:datum 1.0}
+                :color {:value "red"}}}
+    ]})
+#_
+(def shave-pat
+  {:data {},
+   :title {:text  "Aviation-Aggregated modeling Results as Percentages of Demand"
+           :subtitle "Conflict-Phase 3 Most Stressful Scenario"}
+   :config {:background "lightgrey"}
+   :height 700
+   :width 1800
+   :autosize {:type "fit"
+              :contains "padding"}
    :encoding
    {:x {:type "nominal", :field "SRC"
         :axis {:labels false :title nil}}
@@ -383,16 +445,69 @@
                 :color {:value "red"}}}
     ]})
 
+;;we can compute this externally....or try to let vega do it.
+;;vega is more elegant, but it's not obvious right now how we get that
+;;to translate at runtime what the group size is for the nominal x axis.
+;;there's probably some expression that we can use to get the cardinality
+;;of the axis but meh.
+
+;;our other option is to do this externally and update the parameters
+;;in the vega spec.  so let's do that.
+(defn customize-spec [spec data & {:keys [title subtitle width]
+                                   :or {title "The Title"
+                                        subtitle "The SubTitle"
+                                        width 1050}}]
+  (let [[barwidth txt1offset txt2offset] (spec :params)
+        width (or (spec :width) width)
+        n (->> data (map :SRC) distinct count)
+        k (/ width  (+ n 2)) ;;this is how we can divide the space.
+        bar-width k ;(- k 20) ;;need at least 10 for the labels.
+        hw        (/ bar-width 2.0)
+        txt1      (+ hw 5)
+        txt2      (+ txt1 10)
+        push (fn [m v] (assoc m :value v))
+        params [(push barwidth (long bar-width))
+                (push txt1offset (long txt1))
+                (push txt2offset (long txt2))]
+        _ (println [width n params])]
+    (-> spec
+        (assoc-in [:data :values] data)
+        (merge {:title {:text title :subtitle subtitle}
+                :width width
+                :params [(push barwidth   (long bar-width))
+                         (push txt1offset (long  txt1))
+                         (push txt2offset (long txt2))]}))))
+
 (defn render-bars2 [data & {:keys [title subtitle]
                            :or {title "The Title"
                                 subtitle "The SubTitle"}}]
   (let [spec (-> shave-pat
+                 (customize-spec data :title title :subtitle subtitle)
+                 #_#_
                  (assoc-in [:data :values] data)
                  (merge {:title {:text title :subtitle subtitle}}))]
     (oz/view! [:div pats
                [:vega-lite  spec  { :renderer :svg}]])))
 
+(defn src-bar-chart [data & {:keys [title subtitle]
+                            :or {title "The Title"
+                                 subtitle "The SubTitle"}}]
+  (let [spec (-> shave-pat
+                 (customize-spec data :title title :subtitle subtitle)
+                 #_#_
+                 (assoc-in [:data :values] data)
+                 (merge {:title {:text title :subtitle subtitle}}))]
+    [:div {:style {:width "100%"}}
+     [:vega-lite  spec  { :renderer :svg}]]))
 
+(defn branch-charts [data]
+  (let [data (tc/map-columns data :SRC2 [:SRC] (fn [SRC] (subs SRC 0 2)))]
+    [:div
+     pats
+      (for [[{:keys [SRC2]}  src-data] (tc/group-by data [:SRC2] {:result-type :as-map})]
+        (src-bar-chart (->   src-data pivot-trend records vec)
+                       :title (str SRC2 "-Aggregated modeling Results as Percentages of Demand")
+                       :subtitle "Conflict-Phase 3 Most Stressful Scenario"))]))
 ;;campaigning/comp and branch views.
 
 (comment
@@ -411,7 +526,9 @@
 
   (render-bars2  (->  ph3 pivot-trend records vec)
                  :title "Aviation-Aggregated modeling Results as Percentages of Demand"
-                 :subtitle "Conflict-Phase 3 Most Stressful Scenario"))
+                 :subtitle "Conflict-Phase 3 Most Stressful Scenario")
+
+  (oz/view! (->  ph3 branch-charts)))
 
 
 ;;campaign availability will be entirely a
