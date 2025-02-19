@@ -336,9 +336,9 @@
      [:image {:href "data:image/svg+xml;base64,PHN2ZyB4bWxucz0naHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmcnIHdpZHRoPScxMCcgaGVpZ2h0PScxMCc+CiAgPHJlY3Qgd2lkdGg9JzEwJyBoZWlnaHQ9JzEwJyBmaWxsPSd3aGl0ZScvPgogIDxwYXRoIGQ9J00tMSwxIGwyLC0yCiAgICAgICAgICAgTTAsMTAgbDEwLC0xMAogICAgICAgICAgIE05LDExIGwyLC0yJyBzdHJva2U9J2JsYWNrJyBzdHJva2Utd2lkdGg9JzInLz4KPC9zdmc+"
               :x "0" :y "0" :width "10" :height "10"}]]
     [:pattern {:id "yellow-crosshatch"  :patternUnits "userSpaceOnUse" :width "8" :height "8"
-               :patternTransform "rotate(45 0 0)" }
+               :patternTransform "rotate(45 0 0) scale(1.5,1.5)" }
      [:svg {:width "8" :height "8" }
-      [:rect {:width "8" :height "8" :fill "#ffffb2" :stroke "#000000"}
+      [:rect {:width "8" :height "8" :fill "#ffffb2" :stroke "#000000" :stroke-opacity "0.3"}
        [:path {:d "M0 0L8 8ZM8 0L0 8Z" :stroke-width "0.5"  :stroke "#000000"}]]]]]])
 
 (defn ar [pw ph h]
@@ -350,7 +350,7 @@
            :subtitle "Conflict-Phase 3 Most Stressful Scenario"}
    :config {:background "lightgrey"}
    :height 700
-   :width 1800
+   :width 1500
    :autosize {:type "fit"
               :contains "padding"}
    ;;compute variable widths....
