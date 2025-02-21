@@ -17,7 +17,9 @@
                  [com.taoensso/encore  "3.128.0"]
                  [com.taoensso/truss "1.12.0"]
                  ;;we should be picking this up but aren't....
-                 [batik-rasterize "0.1.2"]]
+                 [batik-rasterize "0.1.2"]
+                 [spork "0.2.1.8-SNAPSHOT"
+                  :exclusions [org.clojure/tools.reader]]]
   :plugins [[reifyhealth/lein-git-down "0.4.1"]]
   :middleware [lein-git-down.plugin/inject-properties]
   :repositories [["public-github" {:url "git://github.com"}]]

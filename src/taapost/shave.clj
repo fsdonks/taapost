@@ -9,7 +9,8 @@
             [tech.v3.datatype.functional :as dfn]
             [tech.v3.libs.fastexcel]
             [clojure.string :as s]
-            [taapost.patch]))
+            [taapost.patch]
+            [spork.util.io :as io]))
 
 (defn unjson [in]
   (w/postwalk
@@ -19,6 +20,9 @@
        frm)) in))
 
 (defn records [ds] (tc/rows ds :as-maps))
+
+(defn ar [pw ph h]
+  [(* h (/ pw ph) 1.0) h])
 
 ;;Shave charts are produced for 2 subviews:
 ;;Campaigning, Phase3.
@@ -62,6 +66,12 @@
                      (update :RC max RC)))
                {:AC 0 :NG 0 :RC 0})))
 
+(defn max-inventory [ds]
+  (->> (for [[{:keys [SRC]} src-data]
+             (tc/group-by ds [:SRC] {:result-type :as-map})]
+         [SRC  (get-maxes src-data)])
+       (into {})))
+
 ;;we just get 1 supply....do we know what the programmed force supply is?
 (defn bar-charts [data]
   (for [[{:keys [SRC]} src-data]
@@ -99,6 +109,7 @@
 ;; #sum(supply ra) + sum(supply rc) / sum(demand)
 ;; #bar chart data mean((RCFill+RCExcess)/Demand)
 
+;;not currently used.
 (defn collapse [xs]
   (case (-> xs meta :datatype)
     :string (first xs)
@@ -206,10 +217,12 @@
                         {:pre {:maxac (fn [d] (apply dfn/max (d :AC)))}})
         (tc/ungroup)
         (map-columns* :UnmetDemand      [:Demand :TotalSupply] (fn [dem s] (max (- dem s) 0))
-                      :RCUnavailable    [:NG :RC :SupplyRC]    (fn [ng rc supplyrc] (max (- (+ ng rc) supplyrc)))
+                      :RAUnavailable    [:AC :SupplyRA] (fn [ac supplyRA]  (max (- ac supplyRA) 0))
+                      :RCUnavailable    [:NG :RC :SupplyRC]    (fn [ng rc supplyrc] (max (- (+ ng rc) supplyrc) 0))
                       :RApercent        [:SupplyRA :Demand]    safe-div
                       :RCpercent        [:SupplyRC :Demand]    safe-div
                       :UnmetPercent     [:UnmetDemand :Demand] safe-div
+                      :RAunavailpercent [:RAUnavailable :Demand] safe-div
                       :RCunavailpercent [:RCUnavailable :Demand] safe-div
                       :Totalpercent     [:RApercent :RCpercent]   dfn/+)
         ;;tack on cols for UnmetOverlap Unmetpercent RCunavailpercent
@@ -232,6 +245,7 @@
   (->> (-> (tc/inner-join fat unit-detail [:SRC])
            (tc/map-columns :PaxLabel [:AC :NG :RC :STR] pax-label)
            (tc/rows :as-maps))
+       #_
        (map (fn [{:keys [STR] :as r}]
               (reduce (fn [acc k] (update acc k round-prod STR)) r str-flds))) ;;may not need this!
        tc/dataset))
@@ -240,7 +254,7 @@
 ;;For the bar chart, (RAFill + RAExcess)/Demand -> RASupply, RCFill + RCExcees -> RCSupply
 (defn read-unit-detail [path]
   (-> (tc/dataset path {:key-fn keyword})
-      (tc/select-columns [:SRC :TITLE :STR])))
+      (tc/select-columns [:SRC :TITLE :STR :BRANCH])))
 
 ;;it's way better if the data is reshaped...
 ;;we want src, trend, qty
@@ -341,9 +355,6 @@
       [:rect {:width "8" :height "8" :fill "#ffffb2" :stroke "#000000" :stroke-opacity "0.3"}
        [:path {:d "M0 0L8 8ZM8 0L0 8Z" :stroke-width "0.5"  :stroke "#000000"}]]]]]])
 
-(defn ar [pw ph h]
-  [(* h (/ pw ph) 1.0) h])
-
 (def shave-pat
   {:data {},
    :title {:text  "Aviation-Aggregated modeling Results as Percentages of Demand"
@@ -396,54 +407,6 @@
                 :y {:datum 1.0}
                 :color {:value "red"}}}
     ]})
-#_
-(def shave-pat
-  {:data {},
-   :title {:text  "Aviation-Aggregated modeling Results as Percentages of Demand"
-           :subtitle "Conflict-Phase 3 Most Stressful Scenario"}
-   :config {:background "lightgrey"}
-   :height 700
-   :width 1800
-   :autosize {:type "fit"
-              :contains "padding"}
-   :encoding
-   {:x {:type "nominal", :field "SRC"
-        :axis {:labels false :title nil}}
-    :y {:type "quantitative", :aggregate "sum", :field "value", :stack "zero"
-        :title "%Demand"
-        :scale {:domain  [0.0 2.5]}
-        :axis {:format ".0%"}}},
-   :layer
-   [{:mark {:type "bar" :binSpacing 20 :width 20 :clip true :stroke "black"},
-     :encoding {:color {:type "nominal", :field "trend"
-                        :legend {:direction "horizontal" :orient "bottom"}
-                        :scale {:domain [:RApercent :RCpercent :UnmetOverlapPercent :UnmetPercent :RCunavailpercent]
-                                :range  ["#bdd7ee" "#c6e0b4"  "url(#yellow-crosshatch)" "#ffffb2" "white"]}}
-                :order {:field :color-order}}}
-    ;;title
-    {:mark {:type "text", :color "black", :dy 15, :dx 0 :angle -90 :align "left"},
-     :encoding
-     {;;:detail {:type "nominal", :field "TITLE"},
-      :text    {:type "nominal", :field "TITLE"}
-      :y  {:datum 0}}}
-    ;;str
-    {:mark {:type "text", :color "black", :dy 25, :dx 0 :angle -90 :align "left"},
-     :encoding
-     {;:detail {:type "nominal", :field "variety"},
-      :text    {:type "nominal", :field "PaxLabel"}
-      :y  {:datum 0}}}
-    ;;demand met
-    {:mark {:type "text", :color "black", :dy 15, :dx 0 :angle -90 :align "left"},
-     :encoding
-     {;;:detail {:type "nominal", :field "TITLE"},
-      :text    {:type "nominal", :field "DemandMet"}
-      :y  {:datum 1.5}}}
-    ;;rule.
-    {:mark "rule"
-     :encoding {:x nil ;;this works but I'm not happy.
-                :y {:datum 1.0}
-                :color {:value "red"}}}
-    ]})
 
 ;;we can compute this externally....or try to let vega do it.
 ;;vega is more elegant, but it's not obvious right now how we get that
@@ -468,8 +431,7 @@
         push (fn [m v] (assoc m :value v))
         params [(push barwidth (long bar-width))
                 (push txt1offset (long txt1))
-                (push txt2offset (long txt2))]
-        _ (println [width n params])]
+                (push txt2offset (long txt2))]]
     (-> spec
         (assoc-in [:data :values] data)
         (merge {:title {:text title :subtitle subtitle}
@@ -483,7 +445,6 @@
                                 subtitle "The SubTitle"}}]
   (let [spec (-> shave-pat
                  (customize-spec data :title title :subtitle subtitle)
-                 #_#_
                  (assoc-in [:data :values] data)
                  (merge {:title {:text title :subtitle subtitle}}))]
     (oz/view! [:div pats
@@ -504,47 +465,11 @@
   (let [data (tc/map-columns data :SRC2 [:SRC] (fn [SRC] (subs SRC 0 2)))]
     [:div
      pats
-      (for [[{:keys [SRC2]}  src-data] (tc/group-by data [:SRC2] {:result-type :as-map})]
+     (for [[{:keys [BRANCH]}  src-data] (->> (tc/group-by data [:BRANCH #_:SRC2] {:result-type :as-map})
+                                           (sort-by (comp :SRC2 first)))]
         (src-bar-chart (->   src-data pivot-trend records vec)
-                       :title (str SRC2 "-Aggregated modeling Results as Percentages of Demand")
+                       :title (str BRANCH "-Aggregated modeling Results as Percentages of Demand")
                        :subtitle "Conflict-Phase 3 Most Stressful Scenario"))]))
-;;campaigning/comp and branch views.
-
-(comment
-  ;;sample data
-  (def dt
-    (tc/dataset "../make-one-to-n/resources/results_no_truncation.txt"
-                {:key-fn keyword :separator \tab}))
-
-  (def unit-detail (read-unit-detail "../make-one-to-n/resources/SRC_BASELINE.xlsx"))
-
-  (def ph3 (phase-data dt unit-detail "phase3"))
-
-  (render-bars  (->  ph3 pivot-trend records vec)
-                :title "Aviation-Aggregated modeling Results as Percentages of Demand"
-                :subtitle "Conflict-Phase 3 Most Stressful Scenario")
-
-  (render-bars2  (->  ph3 pivot-trend records vec)
-                 :title "Aviation-Aggregated modeling Results as Percentages of Demand"
-                 :subtitle "Conflict-Phase 3 Most Stressful Scenario")
-
-  (oz/view! (->  ph3 branch-charts)))
-
-
-;;campaign availability will be entirely a
-;;function of RC readiness....
-;;if we count excess demand...assume uniform distribution
-(comment
-  (defn init-supply [ac rc]
-    {:ac (vec (repeatedly ac #(rand-int 960)))
-     :rc (vec (repeatedly rc #(rand-int 2010)))})
-
-  (defn advance [ct clength t]
-    (mod (+ ct t) clength))
-
-  (defn supply-at [{:keys [ac rc]} t]
-    {:ac (->> ac (mapv (fn [ct] (advance ct 960 t))))
-     :rc (->> rc (mapv (fn [ct] (advance ct 2010 t))))}))
 
 ;;transform
 
@@ -562,6 +487,78 @@
                  (assoc-in [:data :values] data)
                  (merge {:title {:text title :subtitle subtitle}}))]
     (oz.headless/render spec "bars.png" :pre-raster (fn [svg] (inject-patterns svg pats)))))
+
+
+;;campaigning/comp and branch views.
+
+;;if we have barchart data, that is equivalent to what we get out of phase-data.
+;;we need to adjust the fields though.
+(def bcd->shave {:dmetRA :RApercent
+                 :dmetRC :RCpercent
+                 :ACunavailable :RAunavailpercent
+                 :RCunavailable :RCunavailpercent})
+
+;;probably doesn't matter?
+(def shave->bcd (into {} (map (fn [[k v]] [v k]) bcd->shave)))
+;;this lets us adapt old bcd format into shavechart data.
+;;helpful for transitioning.
+(defn barchart->phasedata [ds detail]
+  (let [minv (max-inventory ds)]
+    (-> ds
+        (tc/select-rows (fn [{:keys [SRC AC RC NG]}]
+                          (let [r (minv SRC)]
+                            (and (= (r :AC) AC)
+                                 (= (r :RC) RC)
+                                 (= (r :NG) NG)))))
+        (tc/rename-columns  bcd->shave)
+        (map-columns*  :Totalpercent [:RApercent :RCpercent] +
+                       :UnmetPercent [:Totalpercent] (fn [x] (max (- 1.0 x) 0)))
+        (tc/map-rows adjust-demand)
+        (join-and-clean detail))))
+
+;;total percent RAPercent + RCPercent.  We filter scenario by max.
+(defn max-by-scenario [ds]
+  (let [flds (tc/column-names ds)]
+    (-> ds
+        (tc/group-by  [:SRC :AC :NG :RC :phase])
+        (tc/order-by :Totalpercent :asc)
+        (tc/select-rows [0])
+        (tc/ungroup)
+        (tc/select-columns flds)
+        (tc/drop-columns [:Scenario]))))
+
+(defn barchart->src-charts [ds detail]
+  (-> ds
+      (barchart->phasedata detail)
+      max-by-scenario))
+
+(comment
+  
+  ;;sample data
+  (def dt
+    (tc/dataset "../make-one-to-n/resources/results_no_truncation.txt"
+                {:key-fn keyword :separator \tab}))
+
+  (def unit-detail (read-unit-detail (io/file-path "~/SRC_STR_BRANCH.xlsx") #_"../make-one-to-n/resources/SRC_BASELINE.xlsx"))
+
+  (def ph3 (phase-data dt unit-detail "phase3"))
+
+  (render-bars  (->  ph3 pivot-trend records vec)
+                :title "Aviation-Aggregated modeling Results as Percentages of Demand"
+                :subtitle "Conflict-Phase 3 Most Stressful Scenario")
+
+  (render-bars2  (->  ph3 pivot-trend records vec)
+                 :title "Aviation-Aggregated modeling Results as Percentages of Demand"
+                 :subtitle "Conflict-Phase 3 Most Stressful Scenario")
+
+  (oz/view! (->  ph3 branch-charts))
+
+  (def bcd (tc/dataset (io/file-path "~/bcd.txt") {:separator "\t" :key-fn keyword}))
+
+  (def bcd2 (barchart->src-charts bcd unit-detail))
+  (oz/view! (-> bcd2 (tc/select-rows (fn [{:keys [phase]}] (= phase "phase3"))) branch-charts))
+
+  )
 
 ;;possible convenience macros.
 ;; (mapping UnmetDemand   (max (- ?Demand ?TotalSupply) 0)
