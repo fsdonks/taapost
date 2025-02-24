@@ -30,6 +30,8 @@
                         (last args)))
          maps))
 
+(defn col-mean [k] #(-> % (get k) dfn/mean))
+
 (defn ar [pw ph h]
   [(* h (/ pw ph) 1.0) h])
 
@@ -130,6 +132,9 @@
        (reduce (fn [acc [colname sel fn]]
                  (tc/map-columns acc colname sel fn))
                ds)))
+
+(defn aggregate-columns* [ds fns]
+  (tc/aggregate-columns ds (vec (keys fns)) (vec (vals fns))))
 ;;may not need this so much.
 (defn rename [in]
   (let [cols (->> in tc/column-names
@@ -243,12 +248,19 @@
 (def str-flds [:Demand :SupplyRA :SupplyRC :TotalSupply :UnmetDemand
                :RCTotal :RCUnavailable])
 
-(defn pax-label  [AC NG RC STR]
-  (let [[ac ng rc] (mapv #(let [n (/ (* % STR) 1000.0)]
-                            (cond (zero? %) "0K"
-                                  (zero? (long n)) (format "%.1fK" n)
-                                  :else (format "%dK" (long n)))) [AC NG RC])]
-    (str "(" (s/join ", " [ac ng rc]) ")")))
+(defn pax-label
+  ([AC NG RC STR]
+   (let [[ac ng rc] (mapv #(let [n (/ (* % STR) 1000.0)]
+                             (cond (zero? %) "0K"
+                                   (zero? (long n)) (format "%.1fK" n)
+                                   :else (format "%dK" (long n)))) [AC NG RC])]
+     (str "(" (s/join ", " [ac ng rc]) ")")))
+  ([ACSTR NGSTR RCSTR]
+   (let [[ac ng rc] (mapv #(let [n (/ %  1000.0)]
+                             (cond (zero? %) "0K"
+                                   (zero? (long n)) (format "%.1fK" n)
+                                   :else (format "%dK" (long n)))) [ACSTR NGSTR RCSTR])]
+     (str "(" (s/join ", " [ac ng rc]) ")"))))
 
 (defn join-and-clean [fat unit-detail]
   (->> (-> (tc/inner-join fat unit-detail [:SRC])
@@ -364,6 +376,19 @@
       [:rect {:width "8" :height "8" :fill "#ffffb2" :stroke "#000000" :stroke-opacity "0.3"}
        [:path {:d "M0 0L8 8ZM8 0L0 8Z" :stroke-width "0.5"  :stroke "#000000"}]]]]]])
 
+;;We can define custom labels in vega using a (json) map applied as a function looking
+;;up datum.label as a key (via indexed lookup in js).  We can just use clojure
+;;maps to to this, and build the desired json expression programmatically..
+
+(defn label-expr
+  "Given a map of {field label}, returns a json expr for vega - as a string
+   - that will recompute/relabel the fields with the corresponding user
+   defined labels.  This can then be used to define custom labels inside of
+  encoding -> _ -> legend -> labelExpr.
+  (-> {:a \"Trend A\" :b \"Trend B\"} label-expr)"
+  [m]
+  (-> m json/json-str (str  "[datum.label]")))
+
 (def labelexpr
  (-> {:RApercent "RA Supply"
       :RCpercent "RC Supply"
@@ -433,23 +458,16 @@
                 :color {:value "red"}}}
     ]})
 
-;;we can compute this externally....or try to let vega do it.
-;;vega is more elegant, but it's not obvious right now how we get that
-;;to translate at runtime what the group size is for the nominal x axis.
-;;there's probably some expression that we can use to get the cardinality
-;;of the axis but meh.
-
-
-
 ;;our other option is to do this externally and update the parameters
 ;;in the vega spec.  so let's do that.
-(defn customize-spec [spec data & {:keys [title subtitle width]
+(defn customize-spec [spec data & {:keys [title subtitle width keyfn]
                                    :or {title "The Title"
                                         subtitle "The SubTitle"
-                                        width 1050}}]
+                                        width 1050
+                                        keyfn :SRC}}]
   (let [[barwidth txt1offset txt2offset] (spec :params)
         width (or (spec :width) width)
-        n (->> data (map :SRC) distinct count)
+        n (->> data (map keyfn) distinct count)
         k (/ width  (+ n 2)) ;;this is how we can divide the space.
         bar-width (- k 20) ;;need at least 10 for the labels.
         hw        (/ bar-width 2.0)
@@ -485,6 +503,19 @@
     [:div {:style {:width "100%"}}
      [:vega-lite  spec  { :renderer :svg}]]))
 
+
+(def br-spec (-> shave-pat
+                 (assoc-in [:encoding :x :field] "BRANCH")
+                 (assoc-in [:layer 1 :encoding :text :field] "BRANCH")))
+
+(defn branch-bar-chart [data & {:keys [title subtitle]
+                                :or {title "The Title"
+                                     subtitle "The SubTitle"}}]
+  (let [spec (-> br-spec
+                 (customize-spec data :title title :subtitle subtitle :keyfn :BRANCH))]
+    [:div {:style {:width "100%"}}
+     [:vega-lite  spec  { :renderer :svg}]]))
+
 (defn branch-charts
   ([data {:keys [title subtitle] :as opts}]
   (let [data (tc/map-columns data :SRC2 [:SRC] (fn [SRC] (subs SRC 0 2)))]
@@ -498,9 +529,38 @@
   ([data] (branch-charts data {:title "Aggregated Modeling Results as Percentages of Demand"
                                :subtitle "Conflict-Phase 3 Most Stressful Scenario"})))
 
+;;assuming we already have max results from our barchart data....
+(defn agg-branch-charts
+  ([data {:keys [title subtitle] :as opts}]
+   (let [data     (tc/map-columns data :SRC2 [:SRC] (fn [SRC] (subs SRC 0 2)))
+         branches (-> data
+                      (map-columns* :ACSTR [:AC :STR] dfn/*
+                                    :RCSTR [:RC :STR] dfn/*
+                                    :NGSTR [:NG :STR] dfn/*)
+                      (tc/group-by [:BRANCH])
+                      (aggregate-columns*  {:RApercent dfn/mean
+                                            :RCpercent dfn/mean
+                                            :RAunavailpercent dfn/mean
+                                            :RCunavailpercent dfn/mean
+                                            :Totalpercent dfn/mean
+                                            :UnmetPercent dfn/mean
+                                            :UnmetOverlapPercent dfn/mean
+                                            :ACSTR dfn/sum
+                                            :RCSTR dfn/sum
+                                            :NGSTR dfn/sum})
+                      (tc/map-columns :PaxLabel [:ACSTR :RCSTR :NGSTR] (fn [ac rc ng] (pax-label ac rc ng))))]
+     [:div
+      pats
+        (branch-bar-chart (->   branches pivot-trend records vec)
+                          :title (str "All Branches" "-" title )
+                          :subtitle subtitle)]))
+  ([data] (agg-branch-charts data {:title "Aggregated Modeling Results as Percentages of Demand"
+                               :subtitle "Conflict-Phase 3 Most Stressful Scenario"})))
+
 ;;transform
 
-(def pre (slurp "preamble.txt"))
+;;move to resources or inline.
+(def pre "<svg class=\"marks\" width=\"1874\" height=\"799\" viewBox=\"0 0 1874 799\" version=\"1.1\" xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\">\n")
 
 (defn inject-patterns [svg pats]
   (let [head (re-find #"<svg.+/xlink.+>" pre)]
@@ -585,6 +645,7 @@
 
   (oz/view! (->  ph3 branch-charts))
 
+  ;;basic pipeline for munging legacy barchart data and turning it into shave charts.
   (def bcd (tc/dataset (io/file-path "~/bcd.txt") {:separator "\t" :key-fn keyword}))
 
   (def bcd2 (barchart->src-charts bcd unit-detail))
@@ -596,6 +657,11 @@
                 (tc/select-rows (fn [{:keys [phase]}] (= phase "comp1")))
                 (branch-charts {:title "Aggregated Modeling Results as Percentages of Demand"
                                 :subtitle "Campaigning"})))
+
+  (oz/view! (-> bcd2
+                (tc/select-rows (fn [{:keys [phase]}] (= phase "phase3")))
+                (agg-branch-charts {:title "Aggregated Modeling Results as Percentages of Demand"
+                                    :subtitle "Conflict-Phase 3 Most Stressful Scenario By Branch"})))
   )
 
 ;;possible convenience macros.
