@@ -21,6 +21,14 @@
 
 (defn records [ds] (tc/rows ds :as-maps))
 
+;;https://gist.github.com/danielpcox/c70a8aa2c36766200a95
+(defn deep-merge [& maps]
+  (apply merge-with (fn [& args]
+                      (if (every? map? args)
+                        (apply deep-merge args)
+                        (last args)))
+         maps))
+
 (defn ar [pw ph h]
   [(* h (/ pw ph) 1.0) h])
 
@@ -358,7 +366,9 @@
 (def shave-pat
   {:data {},
    :title {:text  "Aviation-Aggregated modeling Results as Percentages of Demand"
-           :subtitle "Conflict-Phase 3 Most Stressful Scenario"}
+           :fontSize 28
+           :subtitle "Conflict-Phase 3 Most Stressful Scenario"
+           :subtitleFontSize 20}
    :config {:background "lightgrey"}
    :height 700
    :width 1500
@@ -369,12 +379,13 @@
             {:name "txt1offset" :value 15}
             {:name "txt2offset" :value 25}]
    :encoding
-   {:x {:type "nominal", :field "SRC"
+   {:x {:type "nominal", :field "TITLE" #_"SRC"
         :axis {:labels false :title nil}}
     :y {:type "quantitative", :aggregate "sum", :field "value", :stack "zero"
         :title "%Demand"
         :scale {:domain  [0.0 2.5]}
-        :axis {:format ".0%"}}},
+        :axis {:format ".0%" :labelFontSize 16
+               :values (vec (range 0.0 2.6 0.25))}}},
    :layer
    [{:mark {:type "bar" :binSpacing 22  :width {:expr "barwidth"}
             :clip true :stroke "black"},
@@ -414,6 +425,8 @@
 ;;there's probably some expression that we can use to get the cardinality
 ;;of the axis but meh.
 
+
+
 ;;our other option is to do this externally and update the parameters
 ;;in the vega spec.  so let's do that.
 (defn customize-spec [spec data & {:keys [title subtitle width]
@@ -434,11 +447,11 @@
                 (push txt2offset (long txt2))]]
     (-> spec
         (assoc-in [:data :values] data)
-        (merge {:title {:text title :subtitle subtitle}
-                :width width
-                :params [(push barwidth   (long bar-width))
-                         (push txt1offset (long  txt1))
-                         (push txt2offset (long txt2))]}))))
+        (deep-merge {:title {:text title :subtitle subtitle}
+                    :width width
+                    :params [(push barwidth   (long bar-width))
+                             (push txt1offset (long  txt1))
+                             (push txt2offset (long txt2))]}))))
 
 (defn render-bars2 [data & {:keys [title subtitle]
                            :or {title "The Title"
@@ -454,10 +467,7 @@
                             :or {title "The Title"
                                  subtitle "The SubTitle"}}]
   (let [spec (-> shave-pat
-                 (customize-spec data :title title :subtitle subtitle)
-                 #_#_
-                 (assoc-in [:data :values] data)
-                 (merge {:title {:text title :subtitle subtitle}}))]
+                 (customize-spec data :title title :subtitle subtitle))]
     [:div {:style {:width "100%"}}
      [:vega-lite  spec  { :renderer :svg}]]))
 
@@ -468,7 +478,7 @@
      (for [[{:keys [BRANCH]}  src-data] (->> (tc/group-by data [:BRANCH #_:SRC2] {:result-type :as-map})
                                            (sort-by (comp :SRC2 first)))]
         (src-bar-chart (->   src-data pivot-trend records vec)
-                       :title (str BRANCH "-Aggregated modeling Results as Percentages of Demand")
+                       :title (str BRANCH "-Aggregated Modeling Results as Percentages of Demand")
                        :subtitle "Conflict-Phase 3 Most Stressful Scenario"))]))
 
 ;;transform
@@ -502,6 +512,9 @@
 (def shave->bcd (into {} (map (fn [[k v]] [v k]) bcd->shave)))
 ;;this lets us adapt old bcd format into shavechart data.
 ;;helpful for transitioning.
+;;Note: we have cases where TotalPercent is 0.
+;;In these cases, we want unmet precent to also be 0.
+;;This indicates no fill and no demand.
 (defn barchart->phasedata [ds detail]
   (let [minv (max-inventory ds)]
     (-> ds
@@ -512,11 +525,13 @@
                                  (= (r :NG) NG)))))
         (tc/rename-columns  bcd->shave)
         (map-columns*  :Totalpercent [:RApercent :RCpercent] +
-                       :UnmetPercent [:Totalpercent] (fn [x] (max (- 1.0 x) 0)))
+                       :UnmetPercent [:Totalpercent] (fn [x] (if (zero? x) x
+                                                                 (max (- 1.0 x) 0))))
         (tc/map-rows adjust-demand)
         (join-and-clean detail))))
 
 ;;total percent RAPercent + RCPercent.  We filter scenario by max.
+;;We have some cases where total percent is zero.
 (defn max-by-scenario [ds]
   (let [flds (tc/column-names ds)]
     (-> ds
