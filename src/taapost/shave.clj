@@ -537,7 +537,7 @@
                       (map-columns* :ACSTR [:AC :STR] dfn/*
                                     :RCSTR [:RC :STR] dfn/*
                                     :NGSTR [:NG :STR] dfn/*)
-                      (tc/group-by [:BRANCH])
+                      (tc/group-by [:BRANCH :phase])
                       (aggregate-columns*  {:RApercent dfn/mean
                                             :RCpercent dfn/mean
                                             :RAunavailpercent dfn/mean
@@ -551,11 +551,14 @@
                       (tc/map-columns :PaxLabel [:ACSTR :RCSTR :NGSTR] (fn [ac rc ng] (pax-label ac rc ng))))]
      [:div
       pats
-        (branch-bar-chart (->   branches pivot-trend records vec)
+      (for [[{:keys [phase]} br-data] (tc/group-by branches  [:phase] {:result-type :as-map})]
+        (branch-bar-chart (->   br-data pivot-trend records vec)
                           :title (str "All Branches" "-" title )
-                          :subtitle subtitle)]))
+                          :subtitle (case phase
+                                      "comp1" "Campaigning"
+                                      subtitle)))]))
   ([data] (agg-branch-charts data {:title "Aggregated Modeling Results as Percentages of Demand"
-                               :subtitle "Conflict-Phase 3 Most Stressful Scenario"})))
+                                   :subtitle ""})))
 
 ;;transform
 
@@ -659,9 +662,9 @@
                                 :subtitle "Campaigning"})))
 
   (oz/view! (-> bcd2
-                (tc/select-rows (fn [{:keys [phase]}] (= phase "phase3")))
+                #_(tc/select-rows (fn [{:keys [phase]}] (= phase "phase3")))
                 (agg-branch-charts {:title "Aggregated Modeling Results as Percentages of Demand"
-                                    :subtitle "Conflict-Phase 3 Most Stressful Scenario By Branch"})))
+                                    :subtitle "Most Stressful Scenario By Branch"})))
   )
 
 ;;possible convenience macros.
