@@ -395,6 +395,7 @@
         :title "%Demand"
         :scale {:domain  [0.0 2.5]}
         :axis {:format ".0%" :labelFontSize 16
+               :titleFontSize 16
                :values (vec (range 0.0 2.6 0.25))}}},
    :layer
    [{:mark {:type "bar" :binSpacing 22  :width {:expr "barwidth"}
@@ -484,15 +485,18 @@
     [:div {:style {:width "100%"}}
      [:vega-lite  spec  { :renderer :svg}]]))
 
-(defn branch-charts [data]
+(defn branch-charts
+  ([data {:keys [title subtitle] :as opts}]
   (let [data (tc/map-columns data :SRC2 [:SRC] (fn [SRC] (subs SRC 0 2)))]
     [:div
      pats
      (for [[{:keys [BRANCH]}  src-data] (->> (tc/group-by data [:BRANCH #_:SRC2] {:result-type :as-map})
                                            (sort-by (comp :SRC2 first)))]
         (src-bar-chart (->   src-data pivot-trend records vec)
-                       :title (str BRANCH "-Aggregated Modeling Results as Percentages of Demand")
-                       :subtitle "Conflict-Phase 3 Most Stressful Scenario"))]))
+                       :title (str BRANCH "-" title )
+                       :subtitle subtitle))]))
+  ([data] (branch-charts data {:title "Aggregated Modeling Results as Percentages of Demand"
+                               :subtitle "Conflict-Phase 3 Most Stressful Scenario"})))
 
 ;;transform
 
@@ -584,8 +588,14 @@
   (def bcd (tc/dataset (io/file-path "~/bcd.txt") {:separator "\t" :key-fn keyword}))
 
   (def bcd2 (barchart->src-charts bcd unit-detail))
-  (oz/view! (-> bcd2 (tc/select-rows (fn [{:keys [phase]}] (= phase "phase3"))) branch-charts))
-
+  (oz/view! (-> bcd2
+                (tc/select-rows (fn [{:keys [phase]}] (= phase "phase3")))
+                (branch-charts {:title "Aggregated Modeling Results as Percentages of Demand"
+                                :subtitle "Conflict-Phase 3 Most Stressful Scenario"})))
+  (oz/view! (-> bcd2
+                (tc/select-rows (fn [{:keys [phase]}] (= phase "comp1")))
+                (branch-charts {:title "Aggregated Modeling Results as Percentages of Demand"
+                                :subtitle "Campaigning"})))
   )
 
 ;;possible convenience macros.
