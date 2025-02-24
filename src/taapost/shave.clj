@@ -10,7 +10,8 @@
             [tech.v3.libs.fastexcel]
             [clojure.string :as s]
             [taapost.patch]
-            [spork.util.io :as io]))
+            [spork.util.io :as io]
+            [clojure.data.json :as json]))
 
 (defn unjson [in]
   (w/postwalk
@@ -363,6 +364,15 @@
       [:rect {:width "8" :height "8" :fill "#ffffb2" :stroke "#000000" :stroke-opacity "0.3"}
        [:path {:d "M0 0L8 8ZM8 0L0 8Z" :stroke-width "0.5"  :stroke "#000000"}]]]]]])
 
+(def labelexpr
+ (-> {:RApercent "RA Supply"
+      :RCpercent "RC Supply"
+      :UnmetOverlapPercent "RC Unavailable As Portion of Unmet"
+      :UnmetPercent "Unmet Demand"
+      :RCunavailpercent  "RC Unavailable Leftover From Unmet"}
+     json/json-str
+     (str  "[datum.label]")))
+
 (def shave-pat
   {:data {},
    :title {:text  "Aviation-Aggregated modeling Results as Percentages of Demand"
@@ -390,7 +400,10 @@
    [{:mark {:type "bar" :binSpacing 22  :width {:expr "barwidth"}
             :clip true :stroke "black"},
      :encoding {:color {:type "nominal", :field "trend"
-                        :legend {:direction "horizontal" :orient "bottom"}
+                        :legend {:direction "horizontal" :orient "bottom"
+                                 :labelExpr labelexpr
+                                 :labelLimit 0
+                                 :title ""}
                         :scale {:domain [:RApercent :RCpercent :UnmetOverlapPercent :UnmetPercent :RCunavailpercent]
                                 :range  ["#bdd7ee" "#c6e0b4"  "url(#yellow-crosshatch)" "#ffffb2" "white"]}}
                 :order {:field :color-order}}}
