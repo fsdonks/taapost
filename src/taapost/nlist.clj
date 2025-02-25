@@ -42,53 +42,6 @@
 ;; # ### Standard Capacity Analysis Run with Default Initial Conditions
 
 
-;; # In order to plot a line chart of TotalRequired and Deployed, we group by time and sum the values so that we have the total TotalRequired and Deployed for each day.  If you don't reset_index, you get a multi-index dataframe from groupby, which you can't plot, but functions called on groupby (like sum() here) will sum the values in each group.
-
-;; # dtrends = root+ "DemandTrends.txt"
-;; # df=pd.read_csv(dtrends, sep='\t')
-;; # df.head()
-;; # group_df = df.groupby(['t']).sum().reset_index()
-;; # group_df.head()
-
-;; # plt.plot('t', 'TotalRequired', data=group_df)
-;; # plt.plot('t', 'Deployed', data=group_df)
-
-;; # ### Random Initial Conditions Output Checks
-
-;; # We've been storing the results the the parent directory alongside the MARATHON workbook.  results.txt is from random initial condition runs from marathon.analysis.random.
-
-;; # In[ ]:
-
-;; def check_rand_results():
-;;     #resources location
-;;     resources="/home/craig/workspace/taa_processor/resources/"
-;;     results = resources+ "results.txt" 
-;;     results
-
-
-;;     # In[ ]:
-
-
-;;     df=pd.read_csv(results, sep='\t')
-;;     df.head()
-;;     # Here we count the number records for each \[SRC, AC\] group.  For x initial condition reps and y phases, we should have x*y records.  This is essentially pivoting in Python by count.
-
-;;     # In[ ]:
-
-
-;;     group_df = df.groupby(by=['SRC', 'AC']).count().reset_index()
-;;     group_df.head()
-
-
-;;     # Check for any \[SRC, AC\] tuple that doesn't have x*y records.
-
-;;     # In[ ]:
-
-
-;;     group_df[group_df['rep-seed']!=12]
-
-;;separate.
-
 ;;might not be 1:1 translation though, can't verify pandas output.
 (defn check-rand-results []
   (let [ds (-> (io/file-path "./resources" "results.txt")
@@ -109,30 +62,25 @@
 ;; # In[ ]:
 
 
+;;output format
+
+;;                         Demand Days
+;;                         demand_met
+;;                         excess_met
+;;                         weight
+;;                         dmet_times_weight
+;;                         emet_times_weight X
+;; OML SRC TITLE RA NG AR [comp1 comp2 phase1 phase2 phase3 phase4] Score Excess Demand_Total STR base_supply
+
+;; combined
+;; OML SRC2 TITLE RA Qty Most Stressed Score Excess STR
+
+
 ;; import copy
 ;; dmet='demand_met'
 ;; emet='excess_met'
 (def dmet :demand-met)
 (def emet :excess-met)
-
-
-#_
-(def cols [:SRC :AC :phase :rep-seed :AC-fill :NG-fill :RC-fill,
-           :AC-overlap :NG-overlap :RC-overlap :total-quantity,
-           :AC-deployable :NG-deployable :RC-deployable :AC-not-ready,
-           :NG-not-ready :RC-not-ready :AC-total :NG-total :RC-total,
-           :NG :RC :demand-met :excess-met])
-
-#_(def df (-> (io/file-path "./resources" "results.txt")
-               (tc/dataset {:separator "\t" :key-fn keyword})))
-
-;;just use keywords :dmet and :emet, no strings.
-
-;; #returns % excess demand met for every SRC, AC, phase combination
-;; #used once to find the max and once for actually dataframe computation
-
-;; def compute_excess(in_df):
-;;     in_df[emet]=(in_df['NG-deployable'] + in_df['AC-deployable'] + in_df['RC-deployable']) / in_df['total-quantity']
 
 (defn compute-excess [{:keys [NG-deployable AC-deployable RC-deployable total-quantity] :as in}]
   (tc/add-column in emet (fun// (fun/+ NG-deployable AC-deployable RC-deployable) total-quantity)))
@@ -153,22 +101,17 @@
     (tc/map-columns group-df emet :float64 [:NG-deployable :AC-deployable :RC-deployable :total-quantity]
       (fn [ng ac rc total]  (if (zero? total) max-excess (/ (+ ng ac rc) total))))))
 
-
 ;; # Do first: 1 workbook
 ;; #     (need to groupby.mean.unstack phase, but what do I expect?)
 ;; #     Tab 1: src, ac, results by phase for demand 1, add score, excess
 ;; #     Tab 2: src, ac, results by phase in columns for demand 2, add score excess
 ;; #     Tab 3: src, ac, score-demand1, excess-demand1, score-dmd2, excess-dmd2, min-demand, min score.
 
-;; # In[ ]:
-
 ;; def results_by_phase(results_df):
 ;;     res=results_df.groupby(by=['SRC', 'AC', 'phase']).mean()
 ;;     return res.unstack(level=['phase'])
 
-(defn results-by-phase [df]
-  (let [res (-> df (tc/group-by [:SRC :AC :phase]) mean)]
-    res))
+(defn results-by-phase [df]  (-> df (tc/group-by [:SRC :AC :phase]) mean))
 
 ;; d_weighted = 'dmet_times_weight'
 ;; e_weighted = 'emet_times_weight'
