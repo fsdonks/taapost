@@ -248,8 +248,12 @@
         (tc/map-rows adjust-demand))))
 
 ;;visualization helper.  we compute the labels from the data and use
-;;that for our text layer for pax.
-;;kind of janky duplication of effort here.
+;;that for our text layer for pax.  We provide 2 arities: one allows
+;;use to pass in STR value to multiply each compo inventory by.
+;;The other assumes we are passing in precomputed compo-strenght
+;;values, and assumes 1 for str to allow us to pass through totals
+;;unaltered.  The former we use for pax-labels in the by-src plots,
+;;and the latter is for aggregating to cross-branch totals.
 (defn pax-label
   ([AC NG RC STR]
    (let [[ac ng rc] (mapv #(let [n (/ (* % STR) 1000.0)]
@@ -257,12 +261,7 @@
                                    (zero? (long n)) (format "%.1fK" n)
                                    :else (format "%dK" (long n)))) [AC NG RC])]
      (str "(" (s/join ", " [ac ng rc]) ")")))
-  ([ACSTR NGSTR RCSTR]
-   (let [[ac ng rc] (mapv #(let [n (/ %  1000.0)]
-                             (cond (zero? %) "0K"
-                                   (zero? (long n)) (format "%.1fK" n)
-                                   :else (format "%dK" (long n)))) [ACSTR NGSTR RCSTR])]
-     (str "(" (s/join ", " [ac ng rc]) ")"))))
+  ([ACSTR NGSTR RCSTR] (pax-label ACSTR NGSTR RCSTR 1)))
 
 ;;combines the data from the fatshavechart and the unit-detail workbook.
 ;;we expect to provide an inner join on SRC, and bring in BRANCH, TITLE, and STR
@@ -287,6 +286,8 @@
 (defn phase-data [results unit-detail phase]
   (join-and-clean (fat-shave-data (stylize results) phase) unit-detail))
 
+;;this helps us define a map that we can use to define a column value that
+;;can provide the ordering for our color channel for our trends.
 (def trend-order (-> [:RApercent :RCpercent :UnmetOverlapPercent :UnmetPercent :RCunavailpercent]
                      (zipmap (range))))
 
@@ -304,6 +305,15 @@
 ;;We can move these elsewhere...
 ;;per https://groups.google.com/g/vega-js/c/_3JwxvraWCQ/m/WGERWhqfBgAJ
 ;;we can get fill patterns in.
+
+;;These are hiccp-encoded SVG patterns that define "colors" we can reference when
+;;using the vega SVG renderer.  It allows us to implement arbitrary pattern fills
+;;for any color we plot (specifically the crosshatch fill from the legacy plot).
+;;We can add new patterns here and they will be available from within our
+;;vega plots as  "url(#some-id)".  For example, to use the pattern with the
+;;id "yellow-crosshatch", we would refer to it from a vega spec as the
+;;string  "url(#yellow-crosshatch)" .  SVG allows an additional layer of
+;;customization over our aesthetics if we desire (in addition to custom patterns).
 (def pats
   [:svg {:height "0" :width "0"}
    [:defs [:pattern {:id "circles-1" :patternUnits "userSpaceOnUse" :width "10" :height "10"}
@@ -322,6 +332,19 @@
 ;;up datum.label as a key (via indexed lookup in js).  We can just use clojure
 ;;maps to to this, and build the desired json expression programmatically..
 
+;;In a vega JSON spec, we might see custom labels defined by a json map with
+;;an indexed lookup on datum encoding like:
+
+;; {"RApercent":"RA Supply",
+;;  "RCpercent":"RC Supply",
+;;  "UnmetOverlapPercent":"RC Unavailable As Portion of Unmet",
+;;  "UnmetPercent":"Unmet Demand",
+;;  "RCunavailpercent":"RC Unavailable Leftover From Unmet"}[datum.label]
+
+;;label-expr allows us to pass in clojure maps to derive a label expression
+;;we can use to easily adjust the label aesthetics without having to
+;;splice strings or munge json directly.
+
 (defn label-expr
   "Given a map of {field label}, returns a json expr for vega - as a string
    - that will recompute/relabel the fields with the corresponding user
@@ -331,6 +354,8 @@
   [m]
   (-> m json/json-str (str  "[datum.label]")))
 
+;;Our common label expression for showing our internal columns
+;;as legacy legend entries.
 (def labelexpr
  (-> {:RApercent "RA Supply"
       :RCpercent "RC Supply"
@@ -340,6 +365,15 @@
      json/json-str
      (str  "[datum.label]")))
 
+;;This is our vega specification for the legacy shave chart implementation.
+;;It is fundamentally a layered plot, in the Graphics of Grammar parlance.
+;;It is a combination of a stacked bar chart, 2 text layers, and a rule layer,
+;;all with a common x/y encoding (e.g. a shared access).
+;;We use parameters via :params to allow quick changing of the specification.
+;;This lets us reference the parameter values inside the specification elsewhere
+;;as if they were just local variables.  We can then change aesthetic features
+;;programmatically (like bard width and spacing) just using clojure data structure
+;;transformations (maps and vectors).
 (def shave-pat
   {:data {},
    :title {:text  "Aviation-Aggregated modeling Results as Percentages of Demand"
@@ -400,8 +434,9 @@
                 :color {:value "red"}}}
     ]})
 
-;;our other option is to do this externally and update the parameters
-;;in the vega spec.  so let's do that.
+;;We define a helper function to handle customizing the vega spec
+;;for a specific set of categories, primarily controlling bar width and
+;;spacing aesthetics, as well as title and subtitle.
 (defn customize-spec [spec data & {:keys [title subtitle width keyfn]
                                    :or {title "The Title"
                                         subtitle "The SubTitle"
@@ -427,6 +462,8 @@
                              (push txt1offset (long  txt1))
                              (push txt2offset (long txt2))]}))))
 
+;;An interactive help function; given a sequence of maps corresponding
+;;to our trend data, we can pop an interactive view of the shavechart.
 (defn render-bars [data & {:keys [title subtitle]
                            :or {title "The Title"
                                 subtitle "The SubTitle"}}]
@@ -437,6 +474,14 @@
     (oz/view! [:div pats
                [:vega-lite  spec  { :renderer :svg}]])))
 
+
+;;Within Branch SRC Shave Charts
+;;==============================
+
+;;Defines an Oz-compatible webpage that we can view.  We can
+;;treat this as a hiccup component that wraps our chart and
+;;renders it as an svg (with the requisite preamble to allow our
+;;svg to have custom patterns defined).
 (defn src-bar-chart [data & {:keys [title subtitle]
                             :or {title "The Title"
                                  subtitle "The SubTitle"}}]
@@ -445,19 +490,8 @@
     [:div {:style {:width "100%"}}
      [:vega-lite  spec  { :renderer :svg}]]))
 
-
-(def br-spec (-> shave-pat
-                 (assoc-in [:encoding :x :field] "BRANCH")
-                 (assoc-in [:layer 1 :encoding :text :field] "BRANCH")))
-
-(defn branch-bar-chart [data & {:keys [title subtitle]
-                                :or {title "The Title"
-                                     subtitle "The SubTitle"}}]
-  (let [spec (-> br-spec
-                 (customize-spec data :title title :subtitle subtitle :keyfn :BRANCH))]
-    [:div {:style {:width "100%"}}
-     [:vega-lite  spec  { :renderer :svg}]]))
-
+;;Defines a visual component that lays out multiple plots for rendering, one for
+;;each branch.  Within the branch, we show a shavechart for each SRC.
 (defn branch-charts
   ([data {:keys [title subtitle] :as opts}]
   (let [data (tc/map-columns data :SRC2 [:SRC] (fn [SRC] (subs SRC 0 2)))]
@@ -471,6 +505,12 @@
   ([data] (branch-charts data {:title "Aggregated Modeling Results as Percentages of Demand"
                                :subtitle "Conflict-Phase 3 Most Stressful Scenario"})))
 
+;;Aggregated Branch Shave Charts
+;;==============================
+
+;;We need to slighty munge the data prior to a visualizing it.
+;;Compared to the src-level view, we now want to compute total
+;;strength and fill stats across a branch.
 (defn agg-branch-data [ds]
   (-> ds
       (map-columns* :SRC2 [:SRC] (fn [SRC] (subs SRC 0 2))
@@ -490,6 +530,24 @@
                              :NGSTR dfn/sum})
        (tc/map-columns :PaxLabel [:ACSTR :RCSTR :NGSTR] (fn [ac rc ng] (pax-label ac rc ng)))))
 
+;;Since we use a clojure map for our spec, we can trivially derive
+;;new specs by messing with the map.
+(def br-spec (-> shave-pat
+                 (assoc-in [:encoding :x :field] "BRANCH")
+                 (assoc-in [:layer 1 :encoding :text :field] "BRANCH")))
+
+;;Another chart component that we can embed for viewing an svg plot in Oz
+;;or elsewhere.  This one aggregates our data by branch and produces the
+;;aggregate branch view.  It's very similar to the basic shave chart, but
+;;the underlying basis for aggregation is BRANCH.
+(defn branch-bar-chart [data & {:keys [title subtitle]
+                                :or {title "The Title"
+                                     subtitle "The SubTitle"}}]
+  (let [spec (-> br-spec
+                 (customize-spec data :title title :subtitle subtitle :keyfn :BRANCH))]
+    [:div {:style {:width "100%"}}
+     [:vega-lite  spec  { :renderer :svg}]]))
+
 ;;assuming we already have max results from our barchart data....
 (defn agg-branch-charts
   ([data {:keys [title subtitle] :as opts}]
@@ -505,8 +563,8 @@
   ([data] (agg-branch-charts data {:title "Aggregated Modeling Results as Percentages of Demand"
                                    :subtitle ""})))
 
-;;transform
-
+;;Emitting raster images
+;;=====================
 ;;allows us to emit custom shapes/colors/patterns into stand-alone svg files.
 ;;necessary to allow us to use svg patterns for colors.
 
@@ -595,12 +653,9 @@
                 :title "Aviation-Aggregated modeling Results as Percentages of Demand"
                 :subtitle "Conflict-Phase 3 Most Stressful Scenario")
 
-  (render-bars2  (->  ph3 pivot-trend records vec)
-                 :title "Aviation-Aggregated modeling Results as Percentages of Demand"
-                 :subtitle "Conflict-Phase 3 Most Stressful Scenario")
-
   (oz/view! (->  ph3 branch-charts))
 
+  ;;actual rendering.
   ;;basic pipeline for munging legacy barchart data and turning it into shave charts.
   (def bcd (tc/dataset (io/file-path "~/bcd.txt") {:separator "\t" :key-fn keyword}))
 
@@ -615,7 +670,6 @@
                                 :subtitle "Campaigning"})))
 
   (oz/view! (-> bcd2
-                #_(tc/select-rows (fn [{:keys [phase]}] (= phase "phase3")))
                 (agg-branch-charts {:title "Aggregated Modeling Results as Percentages of Demand"
                                     :subtitle "Most Stressful Scenario By Branch"})))
   )
