@@ -22,6 +22,8 @@
 
 (defn records [ds] (tc/rows ds :as-maps))
 
+
+;;helpful for messing with vega specs.
 ;;https://gist.github.com/danielpcox/c70a8aa2c36766200a95
 (defn deep-merge [& maps]
   (apply merge-with (fn [& args]
@@ -31,9 +33,49 @@
          maps))
 
 (defn col-mean [k] #(-> % (get k) dfn/mean))
-
+;;aspect ratio.
 (defn ar [pw ph h]
   [(* h (/ pw ph) 1.0) h])
+
+;;preclude divide by zero errors.
+(defn safe-div [x y] (if (zero? y) 0 (dfn// x y)))
+
+;;not currently used.
+(defn collapse [xs]
+  (case (-> xs meta :datatype)
+    :string (first xs)
+    (dfn/mean xs)))
+
+
+(defn map-columns*
+  "Helper function. Acts like tablecloth.api/map-columns, except we can define
+   multiple column mappings inline, meaning we can map many columns. As with
+   clojure.core/let, we can define an imperative set of transforms, e.g. later
+   column mappings can refer to earlier columns that were defined.
+
+   Expects one or more specs for column mapping, where each spec is
+   a triple of column-name, column-selector, and mapping-function.
+
+   (-> the-dataset
+       (map-columns* :total [:x :y] +
+                     :product [:x :y] *))"
+  [ds & specs]
+  (->> specs
+       (partition 3)
+       (reduce (fn [acc [colname sel fn]]
+                 (tc/map-columns acc colname sel fn))
+               ds)))
+
+(defn aggregate-columns*
+  "Helper function. Acts like tablecloth.api/aggregate-columns, except we can define
+   multiple column aggregations in a single map.  Combines the convenience of
+   tablecloth.api/aggregate and aggregate-columns.
+
+   (-> the-dataset
+       (aggregate-columns* {:total    +
+                            :product dfn/mean}))"
+  [ds fns]
+  (tc/aggregate-columns ds (vec (keys fns)) (vec (vals fns))))
 
 ;;Shave charts are produced for 2 subviews:
 ;;Campaigning, Phase3.
@@ -42,7 +84,6 @@
 
 ;;There are 2 classes of charts:
 ;;SRCs By Branch
-
 
 ;;Aggregate branch.
 
@@ -83,17 +124,6 @@
          [SRC  (get-maxes src-data)])
        (into {})))
 
-;;we just get 1 supply....do we know what the programmed force supply is?
-(defn bar-charts [data]
-  (for [[{:keys [SRC]} src-data]
-          (tc/group-by data [:SRC] {:result-type :as-map})]
-    (let [{ac-max :AC rc-max :RC ng-max :NG} (get-maxes src-data)
-          supply (tc/select-rows src-data (fn [{:keys [AC RC NG]}]
-                                            (and (= AC ac-max)
-                                                 (= RC rc-max)
-                                                 (= NG ng-max))))]
-      [SRC supply])))
-
 ;;given a subdataset for a max supply, we want to grab the phases of interest.
 ;;generate a bar chart for each phase.
 
@@ -119,30 +149,6 @@
 ;; #reduces to average supply ra + average supply rc / average demand reduces to 
 ;; #sum(supply ra) + sum(supply rc) / sum(demand)
 ;; #bar chart data mean((RCFill+RCExcess)/Demand)
-
-;;not currently used.
-(defn collapse [xs]
-  (case (-> xs meta :datatype)
-    :string (first xs)
-    (dfn/mean xs)))
-
-(defn map-columns* [ds & specs]
-  (->> specs
-       (partition 3)
-       (reduce (fn [acc [colname sel fn]]
-                 (tc/map-columns acc colname sel fn))
-               ds)))
-
-(defn aggregate-columns* [ds fns]
-  (tc/aggregate-columns ds (vec (keys fns)) (vec (vals fns))))
-;;may not need this so much.
-(defn rename [in]
-  (let [cols (->> in tc/column-names
-                  (map (fn [x]
-                         (case x
-                           :total-quantity :Demand
-                           (-> x name (clojure.string/replace "-" "") keyword)))))]
-    (tc/rename-columns in)))
 
 ;;SRC	phase
 ;;AC-fill	NG-fill	RC-fill	AC-overlap NG-overlap	RC-overlap
@@ -192,11 +198,6 @@
                       :RCExcess  [:NG-deployable :RC-deployable] dfn/+
                       :UnmetDemand [:RAFill :RCFill :Demand] normalized))))
 
-;;we just derive phase-length now. pretty trivial we just add phase-length
-;;column.
-
-;;preclude divide by zero errors.
-(defn safe-div [x y] (if (zero? y) 0 (dfn// x y)))
 ;;ported from the goof shave chart stuff...
 (defn adjust-demand [{:keys [UnmetPercent  RCunavailpercent]}]
   (let [overlap (if (<= UnmetPercent RCunavailpercent)
@@ -209,6 +210,10 @@
 ;;how different is this to the BCD scripts?
 ;;fat is supposed to refer to bar width, which was controlled
 ;;somehow by str IIRC.  Some of this  is just junk now.
+;;we just derive phase-length now. pretty trivial we just add phase-length
+;;column.
+;;we want to transform into normalized values.
+;;For the bar chart, (RAFill + RAExcess)/Demand -> SupplyRA, RCFill + RCExcees -> SupplyRC
 (defn fat-shave-data [d phase]
   (let [phased (by-phase d phase)
         pl     (-> (phased :phase-length) first)
@@ -242,12 +247,9 @@
         ;;tack on cols for UnmetOverlap Unmetpercent RCunavailpercent
         (tc/map-rows adjust-demand))))
 
-(defn round-prod [l r]  (dfn/round (dfn/* l r)))
-;;why do we need to mult by str here?
-;;TODO - snuff this out...
-(def str-flds [:Demand :SupplyRA :SupplyRC :TotalSupply :UnmetDemand
-               :RCTotal :RCUnavailable])
-
+;;visualization helper.  we compute the labels from the data and use
+;;that for our text layer for pax.
+;;kind of janky duplication of effort here.
 (defn pax-label
   ([AC NG RC STR]
    (let [[ac ng rc] (mapv #(let [n (/ (* % STR) 1000.0)]
@@ -262,17 +264,15 @@
                                    :else (format "%dK" (long n)))) [ACSTR NGSTR RCSTR])]
      (str "(" (s/join ", " [ac ng rc]) ")"))))
 
+;;combines the data from the fatshavechart and the unit-detail workbook.
+;;we expect to provide an inner join on SRC, and bring in BRANCH, TITLE, and STR
 (defn join-and-clean [fat unit-detail]
   (->> (-> (tc/inner-join fat unit-detail [:SRC])
            (tc/map-columns :PaxLabel [:AC :NG :RC :STR] pax-label)
            (tc/rows :as-maps))
-       #_
-       (map (fn [{:keys [STR] :as r}]
-              (reduce (fn [acc k] (update acc k round-prod STR)) r str-flds))) ;;may not need this!
        tc/dataset))
 
-;;we want to transform into normalized values.
-;;For the bar chart, (RAFill + RAExcess)/Demand -> RASupply, RCFill + RCExcees -> RCSupply
+;;helper function to pull in our worksheet/table for SRC TITLE STR BRANCH info.
 (defn read-unit-detail [path]
   (-> (tc/dataset path {:key-fn keyword})
       (tc/select-columns [:SRC :TITLE :STR :BRANCH])))
@@ -283,12 +283,15 @@
 ;;{"RA Supply" "RC Supply" "RC Unavailable As Portion of UnMet"
 ;; "Unmet Demand" "RC Unavailable Leftover From Unmet"}
 
+;;generate our aggregated, detailed table of data by phase.
 (defn phase-data [results unit-detail phase]
   (join-and-clean (fat-shave-data (stylize results) phase) unit-detail))
 
 (def trend-order (-> [:RApercent :RCpercent :UnmetOverlapPercent :UnmetPercent :RCunavailpercent]
                      (zipmap (range))))
 
+;;reshapes our phase-data derived from marathon results into a dataset with a trend/value
+;;column pair.  rolls percentages into trend/value.
 (defn pivot-trend [ds]
   (-> (tc/pivot->longer ds [:RApercent :RCpercent :UnmetOverlapPercent :UnmetPercent :RCunavailpercent]
                         {:target-columns :trend :value-column-name :value})
@@ -297,67 +300,6 @@
       (map-columns* :color-order [:trend] trend-order
                     :DemandMet   [:Totalpercent] (fn [e] (str "Demand Met: "
                                                               (format "%.0f" (* e 100)) "%")))))
-
-;;Where does max demand factor in?  I know it matters for 1-n.
-;;I think we pick the max for bar charts too.
-
-(def shave-base
-  {:data {},
-   :title {:text  "Aviation-Aggregated modeling Results as Percentages of Demand"
-           :subtitle "Conflict-Phase 3 Most Stressful Scenario"}
-   :config {:background "lightgrey"}
-   :autosize {
-    :type "fit"
-    :contains "padding"}
-   :height 700
-   ;;:width 1800
-   :encoding
-   {:x {:type "nominal", :field "SRC"
-        :axis {:labels false :title nil}}
-    :y {:type "quantitative", :aggregate "sum", :field "value", :stack "zero"
-        :title "%Demand"
-        :scale {:domain  [0.0 2.5]}
-        :axis {:format ".0%"}}},
-   :layer
-   [{:mark {:type "bar" :binSpacing 20 :width 20 :clip true :stroke "black"},
-     :encoding {:color {:type "nominal", :field "trend"
-                        :legend {:direction "horizontal"
-                                 :orient "bottom"}
-                        :scale {:domain [:RApercent :RCpercent :UnmetOverlapPercent :UnmetPercent :RCunavailpercent]
-                                :range  ["#bdd7ee" "#c6e0b4" "#ffffef" #_"#99996a" "#ffffb2" "white"]}}
-                :order {:field :color-order}}}
-    ;;title
-    {:mark {:type "text", :color "black", :dy 15, :dx 0 :angle -90 :align "left"},
-     :encoding
-     {;;:detail {:type "nominal", :field "TITLE"},
-      :text    {:type "nominal", :field "TITLE"}
-      :y  {:datum 0}}}
-    ;;str
-    {:mark {:type "text", :color "black", :dy 25, :dx 0 :angle -90 :align "left"},
-     :encoding
-     {;:detail {:type "nominal", :field "variety"},
-      :text    {:type "nominal", :field "PaxLabel"}
-      :y  {:datum 0}}}
-    ;;demand met
-    {:mark {:type "text", :color "black", :dy 15, :dx 0 :angle -90 :align "left"},
-     :encoding
-     {;;:detail {:type "nominal", :field "TITLE"},
-      :text    {:type "nominal", :field "DemandMet"}
-      :y  {:datum 1.5}}}
-    ;;rule.
-    {:mark "rule"
-     :encoding {:x nil ;;this works but I'm not happy.
-                :y {:datum 1.0}
-                :color {:value "red"}}}
-    ]})
-
-(defn render-bars [data & {:keys [title subtitle]
-                           :or {title "The Title"
-                                subtitle "The SubTitle"}}]
-  (let [spec (-> shave-base
-                 (assoc-in [:data :values] data)
-                 (merge {:title {:text title :subtitle subtitle}}))]
-    (oz/view! [:vega-lite spec])))
 
 ;;We can move these elsewhere...
 ;;per https://groups.google.com/g/vega-js/c/_3JwxvraWCQ/m/WGERWhqfBgAJ
@@ -485,7 +427,7 @@
                              (push txt1offset (long  txt1))
                              (push txt2offset (long txt2))]}))))
 
-(defn render-bars2 [data & {:keys [title subtitle]
+(defn render-bars [data & {:keys [title subtitle]
                            :or {title "The Title"
                                 subtitle "The SubTitle"}}]
   (let [spec (-> shave-pat
@@ -529,26 +471,29 @@
   ([data] (branch-charts data {:title "Aggregated Modeling Results as Percentages of Demand"
                                :subtitle "Conflict-Phase 3 Most Stressful Scenario"})))
 
+(defn agg-branch-data [ds]
+  (-> ds
+      (map-columns* :SRC2 [:SRC] (fn [SRC] (subs SRC 0 2))
+                    :ACSTR [:AC :STR] dfn/*
+                    :RCSTR [:RC :STR] dfn/*
+                    :NGSTR [:NG :STR] dfn/*)
+       (tc/group-by [:BRANCH :phase])
+       (aggregate-columns*  {:RApercent dfn/mean
+                             :RCpercent dfn/mean
+                             :RAunavailpercent dfn/mean
+                             :RCunavailpercent dfn/mean
+                             :Totalpercent dfn/mean
+                             :UnmetPercent dfn/mean
+                             :UnmetOverlapPercent dfn/mean
+                             :ACSTR dfn/sum
+                             :RCSTR dfn/sum
+                             :NGSTR dfn/sum})
+       (tc/map-columns :PaxLabel [:ACSTR :RCSTR :NGSTR] (fn [ac rc ng] (pax-label ac rc ng)))))
+
 ;;assuming we already have max results from our barchart data....
 (defn agg-branch-charts
   ([data {:keys [title subtitle] :as opts}]
-   (let [data     (tc/map-columns data :SRC2 [:SRC] (fn [SRC] (subs SRC 0 2)))
-         branches (-> data
-                      (map-columns* :ACSTR [:AC :STR] dfn/*
-                                    :RCSTR [:RC :STR] dfn/*
-                                    :NGSTR [:NG :STR] dfn/*)
-                      (tc/group-by [:BRANCH :phase])
-                      (aggregate-columns*  {:RApercent dfn/mean
-                                            :RCpercent dfn/mean
-                                            :RAunavailpercent dfn/mean
-                                            :RCunavailpercent dfn/mean
-                                            :Totalpercent dfn/mean
-                                            :UnmetPercent dfn/mean
-                                            :UnmetOverlapPercent dfn/mean
-                                            :ACSTR dfn/sum
-                                            :RCSTR dfn/sum
-                                            :NGSTR dfn/sum})
-                      (tc/map-columns :PaxLabel [:ACSTR :RCSTR :NGSTR] (fn [ac rc ng] (pax-label ac rc ng))))]
+   (let [branches     (agg-branch-data data)]
      [:div
       pats
       (for [[{:keys [phase]} br-data] (tc/group-by branches  [:phase] {:result-type :as-map})]
@@ -562,6 +507,9 @@
 
 ;;transform
 
+;;allows us to emit custom shapes/colors/patterns into stand-alone svg files.
+;;necessary to allow us to use svg patterns for colors.
+
 ;;move to resources or inline.
 (def pre "<svg class=\"marks\" width=\"1874\" height=\"799\" viewBox=\"0 0 1874 799\" version=\"1.1\" xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\">\n")
 
@@ -570,7 +518,7 @@
     (clojure.string/replace svg head (str head (hc/html pats)))))
 
 ;;we'll try to include our hatched thing here..
-(defn emit-bars2 [data & {:keys [title subtitle]
+(defn emit-bars [data & {:keys [title subtitle]
                           :or {title "The Title"
                                subtitle "The SubTitle"}}]
   (let [spec (-> shave-pat
@@ -581,6 +529,10 @@
 
 ;;campaigning/comp and branch views.
 
+
+;;legacy bar chart data conversion
+;;================================
+
 ;;if we have barchart data, that is equivalent to what we get out of phase-data.
 ;;we need to adjust the fields though.
 (def bcd->shave {:dmetRA :RApercent
@@ -590,11 +542,12 @@
 
 ;;probably doesn't matter?
 (def shave->bcd (into {} (map (fn [[k v]] [v k]) bcd->shave)))
-;;this lets us adapt old bcd format into shavechart data.
-;;helpful for transitioning.
-;;Note: we have cases where TotalPercent is 0.
-;;In these cases, we want unmet precent to also be 0.
-;;This indicates no fill and no demand.
+
+;;this lets us adapt old bcd format into shavechart data. helpful for
+;;transitioning. Note: we have cases where TotalPercent is 0. In these cases, we
+;;want unmet precent to also be 0. This indicates no fill and no demand.
+;;given a barchart dataset, and a unit-detail dataset, we can produce
+;;the input necessary for our barchart plots.
 (defn barchart->phasedata [ds detail]
   (let [minv (max-inventory ds)]
     (-> ds
