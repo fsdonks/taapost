@@ -20,6 +20,7 @@
                  [batik-rasterize "0.1.2"]
                  [spork "0.2.1.8-SNAPSHOT"
                   :exclusions [org.clojure/tools.reader]]]
+  :jvm-opts ^:replace ["-Xmx4g" "-XX:NewSize=200m"]
   :plugins [[reifyhealth/lein-git-down "0.4.1"]]
   :middleware [lein-git-down.plugin/inject-properties]
   :repositories [["public-github" {:url "git://github.com"}]]

@@ -1,10 +1,19 @@
+;;This is a port of the legacy n-list functionality from
+;;pandas to tablecloth.  We substantially change the
+;;computation by decoupling the generation of output
+;;and not trying to retain the merged cell behavior
+;;from multi-indexed dataframes.
+
+;;Instead, we compute a simple "tidy" table,
+;;and then emit that as necessary.
 (ns taapost.nlist
   (:require [tablecloth.api :as tc]
-            [tech.v3.datatype.functional :as fun]
+            [tech.v3.datatype.functional :as dfn]
+            [taapost.util :refer [visualize]]
             [spork.util.io :as io]))
 ;;aux function to copy pandas...looks like we just drop out non-numerical.
 (defn mean [ds]
-  (tc/aggregate-columns ds :type/numerical  fun/mean #_{:separate? false}))
+  (tc/aggregate-columns ds :type/numerical  dfn/mean #_{:separate? false}))
 
 ;;non-broadcasting where, per craig's usage. simple replacement.
 (defn where [xs pred v else]
@@ -23,18 +32,27 @@
                       (fn [~@vars]
                         ~body)))))
 
-
 ;; #!/usr/bin/env python
 ;; # coding: utf-8
 
 ;; # In[ ]:
 
+;;utils, maybe obe
 
-;; import pandas as pd
-;; from functools import partial
-;; from pathlib import Path
-;; import openpyxl
-;; import sys
+;; #given an ordered list of initial columns, put the rest of the columns in the dataframe at the end
+;; def reorder_columns(order, df):
+;;     cols=[c for c in order if c in df] + [c for c in df if c not in order]
+;;     return df[cols]
+
+;; def ac_not_sorted(group):
+;;     return not all(x>=y for x, y in zip(group[('AC', '')], group[('AC', '')].iloc[1:]))
+
+;; def add_smoothed(group, col_name, new_name):
+;;     col=[i for i in range(min(group[col_name]), max(group[col_name])+1)]
+;;     col.reverse()
+;;     group[new_name]=col
+;;     return group
+
 ;; # # TAA Post Processing
 
 ;; # ## Output Checking
@@ -43,14 +61,14 @@
 
 
 ;;might not be 1:1 translation though, can't verify pandas output.
-(defn check-rand-results []
-  (let [ds (-> (io/file-path "./resources" "results.txt")
-               (tc/dataset {:separator "\t" :key-fn keyword}))]
-    (-> (tc/group-by ds [:SRC :AC])
-        (tc/add-columns {:row-count tc/row-count
-                         :group (fn [ds] (str [(-> ds :SRC first) (-> ds :AC first)]))}) ;;group is janky here.
-        tc/ungroup
-        (tc/select [:SRC :AC :rep-seed :row-count :group] (comp #(not= 12 %) :row-count)))))
+;; (defn check-rand-results []
+;;   (let [ds (-> (io/file-path "./resources" "results.txt")
+;;                (tc/dataset {:separator "\t" :key-fn keyword}))]
+;;     (-> (tc/group-by ds [:SRC :AC])
+;;         (tc/add-columns {:row-count tc/row-count
+;;                          :group (fn [ds] (str [(-> ds :SRC first) (-> ds :AC first)]))}) ;;group is janky here.
+;;         tc/ungroup
+;;         (tc/select [:SRC :AC :rep-seed :row-count :group] (comp #(not= 12 %) :row-count)))))
 
 ;; # ## Post Processing
 
@@ -75,41 +93,83 @@
 ;; combined
 ;; OML SRC2 TITLE RA Qty Most Stressed Score Excess STR
 
-
-;; import copy
 ;; dmet='demand_met'
 ;; emet='excess_met'
 (def dmet :demand-met)
 (def emet :excess-met)
 
+
+;;Quick overview of supply variation scoring to create an OML:
+;;- We have multiple replications per design point, where a design point
+;;  is [SRC AC NG RC].
+;;  - this could involve variation across all compos, but we typically
+;;    are only looking at AC in our deliverables for now.
+;;- We have multiple phases per design, like [comp1 phase1 phas2 phase3 comp2]
+
+;;For purposes of scoring, we want to look at each [SRC AC Phase] point, and
+;;compute some notion of stress or performance.
+;;The chosen metric is demand met and excess met.
+;;  Relative to the demand, how much did with fill, and then how much did we have
+;;  in excess?
+
+;;Note all phases are created equal.  We have a mapping of phase-weights that
+;;we should apply to the sample means for the performance measures for each phase.
+
+;;Once we have weighted measures, we can then develop an order of merit by
+;;computing a score (the sum of weighted demand met across phases), and a secondary
+;;criteria for ordering (the weighted sum of excess demand met across phases).
+
+;;Since we are dealing with multiple replications, we compute a sample mean
+;;for these values.
+
+;;We end up with an aggregated dataset where we can map each [SRC AC NG RC] to
+;;a corresponding [Score Excess], or [AveragedWeightedDemandMet AverageWeightedExcess]
+
+;;From here, we can order the [SRC AC NG RC] designs by [Score Excess] in descending order
+;;to get an order of merit list for potential supply reductions.
+
+;;We also want (for intuitive purposes) to ensure that our scores are monotonically
+;;decreasing.  That is, we don't want to see increases in performance by decreasing
+;;supply.  We typically accomplish this with more replications or by smoothing the results
+;;to eliminate noise from outliers.  One typical cause is the notion of "excess" demand,
+;;which is driven by available/not-deployed units.  This can introduce variance due
+;;to the dynamic availability of units and other timing phenomenon.
+
+;;Each line in the OML represents a potential cut of 1 UIC from the supply.  We like
+;;to present the resulting inventory as the inventory remaining if the cut is selected
+;;(as opposed to the inventory prior to cutting).
+
+;;The end result is a couple of different outputs.  We typically have multiple result sets
+;;from experiments that we want to combine in some way (effecting worst-case performance
+;;for each design, e.g. min demand met, min excess type stuff).
+
+;;Each the result sets gets its own OML table.  We then have a combined view (combining
+;;by worse performance for each design), which we consolidate into a simplified "final"
+;;OML, with just [SRC AC Score Excess ]
+
+;;computes a new column
 (defn compute-excess [{:keys [NG-deployable AC-deployable RC-deployable total-quantity] :as in}]
-  (tc/add-column in emet (fun// (fun/+ NG-deployable AC-deployable RC-deployable) total-quantity)))
+  (tc/add-column in emet (dfn// (dfn/+ NG-deployable AC-deployable RC-deployable) total-quantity))
+
 
 ;; #compute % demand met (dmet) and % excess over the demand (emet)
 ;; #first by phase (use average group by with src, ac, phase)
 ;;tom - got bit by floating point zero comparisons a lot here, need to use clojure.core/zero?
+
+;;this is mildly goofy.  kind of maxing dataframe ops...
+
+;;when there is no demand in a phase, dmet is 100%
+;;When there is no demand in a phase, emet is the max emet across all SRCs and phases.
+;;emet will be 0 because if there is no demand, we don't have a record.
 (defn by-phase-percentages [res-df]
-  ;;     #when there is no demand in a phase, dmet is 100%
   (let [group-df  (-> (tc/group-by res-df [:SRC :AC :phase])
                       (mean)
                       (tc/map-columns dmet :float64 [:NG-fill :AC-fill :RC-fill :total-quantity]
-                                      (fn [ng ac rc total]  (if (zero? total) 1.0 (/ (+ ng ac rc) total)))))
-        ;;     #When there is no demand in a phase, emet is the max emet across all SRCs and phases.
+                         (fn ^double [^double ng ^double ac ^double rc ^double total]  (if (zero? total) 1.0 (/ (+ ng ac rc) total)))))
         excess-df  (->  group-df (tc/select-rows #(not (zero? (% :total-quantity)))) compute-excess)
-        max-excess (->> (excess-df emet)  (reduce max) inc)]
-    ;;     #this will be 0 because if there is no demand, we don't have a record.
+        max-excess (->> (excess-df emet)  (reduce dfn/max) inc)]
     (tc/map-columns group-df emet :float64 [:NG-deployable :AC-deployable :RC-deployable :total-quantity]
-      (fn [ng ac rc total]  (if (zero? total) max-excess (/ (+ ng ac rc) total))))))
-
-;; # Do first: 1 workbook
-;; #     (need to groupby.mean.unstack phase, but what do I expect?)
-;; #     Tab 1: src, ac, results by phase for demand 1, add score, excess
-;; #     Tab 2: src, ac, results by phase in columns for demand 2, add score excess
-;; #     Tab 3: src, ac, score-demand1, excess-demand1, score-dmd2, excess-dmd2, min-demand, min score.
-
-;; def results_by_phase(results_df):
-;;     res=results_df.groupby(by=['SRC', 'AC', 'phase']).mean()
-;;     return res.unstack(level=['phase'])
+      (fn ^double [^double ng ^double ac ^double rc ^double total]   (if (zero? total) max-excess (/ (+ ng ac rc) total))))))
 
 (defn results-by-phase [df]  (-> df (tc/group-by [:SRC :AC :phase]) mean))
 
@@ -119,44 +179,35 @@
 ;; #emet_sum='weighted_emet_sum'
 ;; dmet_sum=''
 ;; emet_sum=''
-;; #given an ordered list of initial columns, put the rest of the columns in the dataframe at the end
-;; def reorder_columns(order, df):
-;;     cols=[c for c in order if c in df] + [c for c in df if c not in order]
-;;     return df[cols]
 
-;; def ac_not_sorted(group):
-;;     return not all(x>=y for x, y in zip(group[('AC', '')], group[('AC', '')].iloc[1:]))
+(defn load-results [in]
+  (cond (string? in) (-> in (tc/dataset {:separator "\t" :key-fn keyword}))
+        (tc/dataset? in) in
+        :else (throw (ex-info "expected file path or dataset" {:in in}))))
 
-;; def add_smoothed(group, col_name, new_name):
-;;     col=[i for i in range(min(group[col_name]), max(group[col_name])+1)]
-;;     col.reverse()
-;;     group[new_name]=col
-;;     return group
+;;this seems wrong....how are the entries going to be the same size?
+;;maybe it's guaranteed.
+(defn add-smoothed [gr col-name new-name]
+  (let [from (gr col-name)
+        [mn mx] (reduce (fn [[l r] x]
+                          [(min (or l x) x) (max (or r x) x)])
+                        [nil nil] from)]
+    (tc/add-column gr new-name (range mx (dec mn) -1))))
 
-;; def check_order(order_writer, demand_name, left, smooth):
-;;     #Make sure that scores are monotonically decreasing as inventory decreases
-;;     res=left.groupby('SRC', sort=False).filter(ac_not_sorted)
-;;     res[('incorrect_RA', '')]=res[('AC', '')]!=res[('AC_smoothed', '')]
-;;     if res[('incorrect_RA', '')].sum()==0:
-;;         num_flops=0
-;;     else: 
-;;         num_flops=res[('incorrect_RA', '')].sum()-1
-;;     print("There are ", num_flops, " flip flops for ", demand_name)
-;;     res.to_excel(order_writer, sheet_name=demand_name)
-;;     if smooth: 
-;;         left[('AC', '')]=left[('AC_smoothed','')]
-;;     left.drop([('AC_smoothed', '')], axis=1, inplace=True)
-;;     return left
+;;Make sure that scores are monotonically decreasing as inventory decreases
+;;I think we can implement this more simply....We ignore all the writing bs.
+;;Too much interweaving of IO (excel writing) for my taste.
 
-;; def load_results(results):
-;;     if isinstance(results, pd.DataFrame):        
-;;         #already a dataframe
-;;         df=results
-;;     else:
-;;         df=pd.read_csv(results, sep='\t')
-;;     return df
+;;compute score and excess from a path to results.txt
+(defn compute-scores [results phase-weights title-strength & {:keys [smooth demand-name]}]
+  (let [df (load-results results)
+        ;;     df= df[(df[['AC', 'NG', 'RC']] == 0).all(axis=1)==False]
+        ;;     #sometimes all inventory was equal to 0, but we shouldn't have that. 
+        ;;     #We should have all phases if all inventory ==0
 
-;; #compute score and excess from a path to results.txt
+        ]
+    ))
+
 ;; def compute_scores(results_path, phase_weights, title_strength, smooth: bool, demand_name, order_writer):
 ;;     df=load_results(results_path)
 ;;     #sometimes all inventory was equal to 0, but we shouldn't have that. 
@@ -453,13 +504,12 @@
 ;;                 k=phase
 ;;             all_weights[k]= phase_breakout[phase]*results_weights[demand_name]
 ;;     return all_weights
-        
-        
-        
-
-    
 
 
+(comment
+  (def dt (-> (io/file-path "~/repos/make-one-to-n/resources/results.txt") (tc/dataset {:separator "\t" :key-fn keyword})))
+
+  )
 
 
 
