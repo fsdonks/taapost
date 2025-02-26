@@ -1,6 +1,7 @@
 (ns taapost.util
   (:require [spork.cljgui.components [swing :as gui]]
-            [tablecloth.api :as tc]))
+            [tablecloth.api :as tc]
+            [tech.v3.datatype.functional :as dfn]))
 
 ;;a little helper ported from spork.util.table to tablecloth.
 ;;useful for looking at intermediate tables...
@@ -8,3 +9,56 @@
   (gui/->scrollable-view
    (gui/->swing-table (tc/column-names obj)
                       (tc/rows obj) :sorted sorted)))
+
+(defn records
+  "Convenience fn to project the dataset onto seq-of-maps.
+   Identical to tech.ml.dataset seq-of-maps function."
+  [ds]
+  (tc/rows ds :as-maps))
+
+;;helpful for messing with vega specs.
+;;https://gist.github.com/danielpcox/c70a8aa2c36766200a95
+(defn deep-merge
+  "Like clojure.core/merge, but recursively merges maps."
+  [& maps]
+  (apply merge-with (fn [& args]
+                      (if (every? map? args)
+                        (apply deep-merge args)
+                        (last args)))
+         maps))
+
+;;not currently used.
+(defn collapse [xs]
+  (case (-> xs meta :datatype)
+    :string (first xs)
+    (dfn/mean xs)))
+
+(defn map-columns*
+  "Helper function. Acts like tablecloth.api/map-columns, except we can define
+   multiple column mappings inline, meaning we can map many columns. As with
+   clojure.core/let, we can define an imperative set of transforms, e.g. later
+   column mappings can refer to earlier columns that were defined.
+
+   Expects one or more specs for column mapping, where each spec is
+   a triple of column-name, column-selector, and mapping-function.
+
+   (-> the-dataset
+       (map-columns* :total [:x :y] +
+                     :product [:x :y] *))"
+  [ds & specs]
+  (->> specs
+       (partition 3)
+       (reduce (fn [acc [colname sel fn]]
+                 (tc/map-columns acc colname sel fn))
+               ds)))
+
+(defn aggregate-columns*
+  "Helper function. Acts like tablecloth.api/aggregate-columns, except we can define
+   multiple column aggregations in a single map.  Combines the convenience of
+   tablecloth.api/aggregate and aggregate-columns.
+
+   (-> the-dataset
+       (aggregate-columns* {:total    +
+                            :product dfn/mean}))"
+  [ds fns]
+  (tc/aggregate-columns ds (vec (keys fns)) (vec (vals fns))))

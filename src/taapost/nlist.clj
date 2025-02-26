@@ -9,11 +9,32 @@
 (ns taapost.nlist
   (:require [tablecloth.api :as tc]
             [tech.v3.datatype.functional :as dfn]
+            [tech.v3.dataset.reductions :as reds]
             [taapost.util :refer [visualize]]
             [spork.util.io :as io]))
 ;;aux function to copy pandas...looks like we just drop out non-numerical.
 (defn mean [ds]
   (tc/aggregate-columns ds :type/numerical  dfn/mean #_{:separate? false}))
+
+;;we can account for grouped data...
+;;as pandas does natively.
+;;do ungrouped version first...
+(defn numeric-column-names [ds]
+  (->> ds
+       (keep (fn [[nm col]]
+               (let [m (meta col)]
+                 (when-not (#{:object :string :boolean} (m :datatype))
+                   (m :name)))))))
+
+;;this is so much faster, like 500x.  We should always prefer to
+;;group and aggregate at the same time if possible.....
+(defn agg-mean [ds group-fields]
+  (let [original (tc/column-names ds)
+        gf        (set group-fields)
+        targets   (filter (complement gf) (numeric-column-names ds))
+        fns       (->> targets (map (fn [k] [k (reds/mean k)])) (into {}))]
+    (-> (reds/group-by-column-agg group-fields fns ds)
+        (tc/reorder-columns original))))
 
 ;;non-broadcasting where, per craig's usage. simple replacement.
 (defn where [xs pred v else]
@@ -128,28 +149,29 @@
 ;;From here, we can order the [SRC AC NG RC] designs by [Score Excess] in descending order
 ;;to get an order of merit list for potential supply reductions.
 
-;;We also want (for intuitive purposes) to ensure that our scores are monotonically
-;;decreasing.  That is, we don't want to see increases in performance by decreasing
-;;supply.  We typically accomplish this with more replications or by smoothing the results
-;;to eliminate noise from outliers.  One typical cause is the notion of "excess" demand,
-;;which is driven by available/not-deployed units.  This can introduce variance due
-;;to the dynamic availability of units and other timing phenomenon.
+;;We also want (for intuitive purposes) to ensure that our scores are
+;;monotonically decreasing. That is, we don't want to see (even marginal)
+;;increases in performance by decreasing supply. We typically accomplish this
+;;with more replications or by smoothing the results to eliminate noise from
+;;outliers. One typical cause is the notion of "excess" demand, which is driven
+;;by available/not-deployed units. This can introduce variance due to the
+;;dynamic availability of units and other timing phenomenon.
 
 ;;Each line in the OML represents a potential cut of 1 UIC from the supply.  We like
 ;;to present the resulting inventory as the inventory remaining if the cut is selected
 ;;(as opposed to the inventory prior to cutting).
 
 ;;The end result is a couple of different outputs.  We typically have multiple result sets
-;;from experiments that we want to combine in some way (effecting worst-case performance
+;;from experiments that we want to combine in some way (worst-case performance
 ;;for each design, e.g. min demand met, min excess type stuff).
 
 ;;Each the result sets gets its own OML table.  We then have a combined view (combining
 ;;by worse performance for each design), which we consolidate into a simplified "final"
-;;OML, with just [SRC AC Score Excess ]
+;;OML, with just [SRC AC Score Excess]
 
 ;;computes a new column
 (defn compute-excess [{:keys [NG-deployable AC-deployable RC-deployable total-quantity] :as in}]
-  (tc/add-column in emet (dfn// (dfn/+ NG-deployable AC-deployable RC-deployable) total-quantity))
+  (tc/add-column in emet (dfn// (dfn/+ NG-deployable AC-deployable RC-deployable) total-quantity)))
 
 
 ;; #compute % demand met (dmet) and % excess over the demand (emet)
@@ -162,16 +184,14 @@
 ;;When there is no demand in a phase, emet is the max emet across all SRCs and phases.
 ;;emet will be 0 because if there is no demand, we don't have a record.
 (defn by-phase-percentages [res-df]
-  (let [group-df  (-> (tc/group-by res-df [:SRC :AC :phase])
-                      (mean)
+  (let [group-df  (-> res-df
+                      (agg-mean [:SRC :AC :phase])
                       (tc/map-columns dmet :float64 [:NG-fill :AC-fill :RC-fill :total-quantity]
                          (fn ^double [^double ng ^double ac ^double rc ^double total]  (if (zero? total) 1.0 (/ (+ ng ac rc) total)))))
-        excess-df  (->  group-df (tc/select-rows #(not (zero? (% :total-quantity)))) compute-excess)
-        max-excess (->> (excess-df emet)  (reduce dfn/max) inc)]
+        excess-df  (->  group-df (tc/select-rows #(not (zero? ^long (% :total-quantity)))) compute-excess)
+        max-excess (->> (excess-df emet)  (reduce dfn/max) double inc)]
     (tc/map-columns group-df emet :float64 [:NG-deployable :AC-deployable :RC-deployable :total-quantity]
       (fn ^double [^double ng ^double ac ^double rc ^double total]   (if (zero? total) max-excess (/ (+ ng ac rc) total))))))
-
-(defn results-by-phase [df]  (-> df (tc/group-by [:SRC :AC :phase]) mean))
 
 ;; d_weighted = 'dmet_times_weight'
 ;; e_weighted = 'emet_times_weight'
@@ -200,10 +220,17 @@
 
 ;;compute score and excess from a path to results.txt
 (defn compute-scores [results phase-weights title-strength & {:keys [smooth demand-name]}]
-  (let [df (load-results results)
-        ;;     df= df[(df[['AC', 'NG', 'RC']] == 0).all(axis=1)==False]
-        ;;     #sometimes all inventory was equal to 0, but we shouldn't have that. 
-        ;;     #We should have all phases if all inventory ==0
+  (let [scores (-> results
+                   load-results
+                   (tc/select-rows (fn [{:keys [AC NG RC]}] (> (+ AC NG RC) 0)))
+                   by-phase-percentages
+                   (u/map-columns* :weight [:phase] phase-weights
+                                   :d-weighted [:demand-met :weight]  *
+                                   :e-weighted [:excess-met :weight]  *))
+        res    (-> (tc/select-columns scores
+                   [:SRC, :AC, :NG, :RC, :phase, :total-quantity, :demand-met, :excess-met,
+                    :weight, :d-weighted, :e-weighted])
+                   results-by-phase)
 
         ]
     ))
@@ -212,7 +239,7 @@
 ;;     df=load_results(results_path)
 ;;     #sometimes all inventory was equal to 0, but we shouldn't have that. 
 ;;     #We should have all phases if all inventory ==0
-;;     df= df[(df[['AC', 'NG', 'RC']] == 0).all(axis=1)==False]
+;;     df= df[(df[['AC', 'NG', 'RC']] == 0).all(axis=1)==False] ;;this is row-filtering.
 ;;     scores = by_phase_percentages(df)
 ;;     scores['weight']=scores['phase'].map(phase_weights)
 ;;     scores[d_weighted]=scores[dmet]*scores['weight']

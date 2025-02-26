@@ -10,6 +10,7 @@
             [tech.v3.libs.fastexcel]
             [clojure.string :as s]
             [taapost.patch]
+            [taapost.util :as u]
             [spork.util.io :as io]
             [clojure.data.json :as json]))
 
@@ -20,18 +21,6 @@
        (zipmap (map keyword (keys frm)) (vals frm))
        frm)) in))
 
-(defn records [ds] (tc/rows ds :as-maps))
-
-
-;;helpful for messing with vega specs.
-;;https://gist.github.com/danielpcox/c70a8aa2c36766200a95
-(defn deep-merge [& maps]
-  (apply merge-with (fn [& args]
-                      (if (every? map? args)
-                        (apply deep-merge args)
-                        (last args)))
-         maps))
-
 (defn col-mean [k] #(-> % (get k) dfn/mean))
 ;;aspect ratio.
 (defn ar [pw ph h]
@@ -39,43 +28,6 @@
 
 ;;preclude divide by zero errors.
 (defn safe-div [x y] (if (zero? y) 0 (dfn// x y)))
-
-;;not currently used.
-(defn collapse [xs]
-  (case (-> xs meta :datatype)
-    :string (first xs)
-    (dfn/mean xs)))
-
-
-(defn map-columns*
-  "Helper function. Acts like tablecloth.api/map-columns, except we can define
-   multiple column mappings inline, meaning we can map many columns. As with
-   clojure.core/let, we can define an imperative set of transforms, e.g. later
-   column mappings can refer to earlier columns that were defined.
-
-   Expects one or more specs for column mapping, where each spec is
-   a triple of column-name, column-selector, and mapping-function.
-
-   (-> the-dataset
-       (map-columns* :total [:x :y] +
-                     :product [:x :y] *))"
-  [ds & specs]
-  (->> specs
-       (partition 3)
-       (reduce (fn [acc [colname sel fn]]
-                 (tc/map-columns acc colname sel fn))
-               ds)))
-
-(defn aggregate-columns*
-  "Helper function. Acts like tablecloth.api/aggregate-columns, except we can define
-   multiple column aggregations in a single map.  Combines the convenience of
-   tablecloth.api/aggregate and aggregate-columns.
-
-   (-> the-dataset
-       (aggregate-columns* {:total    +
-                            :product dfn/mean}))"
-  [ds fns]
-  (tc/aggregate-columns ds (vec (keys fns)) (vec (vals fns))))
 
 ;;Shave charts are produced for 2 subviews:
 ;;Campaigning, Phase3.
@@ -190,13 +142,13 @@
                                              (derive-length AC-total NG-total RC-total AC NG RC))))
                              {}))]
     (-> d
-        (tc/map-columns  :phase-length [:phase] lengths)
-        (map-columns* :RAFill    [:AC-fill] identity
-                      :RCFill    [:RC-fill :NG-fill] dfn/+
-                      :Demand    [:total-quantity]   identity
-                      :RAExcess  [:AC-deployable]    identity
-                      :RCExcess  [:NG-deployable :RC-deployable] dfn/+
-                      :UnmetDemand [:RAFill :RCFill :Demand] normalized))))
+        (u/map-columns* :phase-length [:phase] lengths
+                        :RAFill    [:AC-fill] identity
+                        :RCFill    [:RC-fill :NG-fill] dfn/+
+                        :Demand    [:total-quantity]   identity
+                        :RAExcess  [:AC-deployable]    identity
+                        :RCExcess  [:NG-deployable :RC-deployable] dfn/+
+                        :UnmetDemand [:RAFill :RCFill :Demand] normalized))))
 
 ;;ported from the goof shave chart stuff...
 (defn adjust-demand [{:keys [UnmetPercent  RCunavailpercent]}]
@@ -230,20 +182,20 @@
                        :RCTotal   (fn [{:keys [RC-total NG-total]}]
                                     (/ (+ (dfn/mean RC-total) (dfn/mean NG-total)) pl))
                        :phase-length (fn [_] pl)})
-        (map-columns* :TotalSupply [:SupplyRA :SupplyRC] dfn/+)
+        (u/map-columns* :TotalSupply [:SupplyRA :SupplyRC] dfn/+)
         (tc/group-by [:SRC]) ;;it's possible this v fails if we dupes.
         (tc/select-rows (fn [{:keys [AC maxac]}] (= AC maxac))
                         {:pre {:maxac (fn [d] (apply dfn/max (d :AC)))}})
         (tc/ungroup)
-        (map-columns* :UnmetDemand      [:Demand :TotalSupply] (fn [dem s] (max (- dem s) 0))
-                      :RAUnavailable    [:AC :SupplyRA] (fn [ac supplyRA]  (max (- ac supplyRA) 0))
-                      :RCUnavailable    [:NG :RC :SupplyRC]    (fn [ng rc supplyrc] (max (- (+ ng rc) supplyrc) 0))
-                      :RApercent        [:SupplyRA :Demand]    safe-div
-                      :RCpercent        [:SupplyRC :Demand]    safe-div
-                      :UnmetPercent     [:UnmetDemand :Demand] safe-div
-                      :RAunavailpercent [:RAUnavailable :Demand] safe-div
-                      :RCunavailpercent [:RCUnavailable :Demand] safe-div
-                      :Totalpercent     [:RApercent :RCpercent]   dfn/+)
+        (u/map-columns* :UnmetDemand      [:Demand :TotalSupply] (fn [dem s] (max (- dem s) 0))
+                        :RAUnavailable    [:AC :SupplyRA] (fn [ac supplyRA]  (max (- ac supplyRA) 0))
+                        :RCUnavailable    [:NG :RC :SupplyRC]    (fn [ng rc supplyrc] (max (- (+ ng rc) supplyrc) 0))
+                        :RApercent        [:SupplyRA :Demand]    safe-div
+                        :RCpercent        [:SupplyRC :Demand]    safe-div
+                        :UnmetPercent     [:UnmetDemand :Demand] safe-div
+                        :RAunavailpercent [:RAUnavailable :Demand] safe-div
+                        :RCunavailpercent [:RCUnavailable :Demand] safe-div
+                        :Totalpercent     [:RApercent :RCpercent]   dfn/+)
         ;;tack on cols for UnmetOverlap Unmetpercent RCunavailpercent
         (tc/map-rows adjust-demand))))
 
@@ -298,9 +250,9 @@
                         {:target-columns :trend :value-column-name :value})
       (tc/drop-columns [:RApercent :RCpercent :UnmetPercent :RCunavailpercent :UnmetOverlapPercent])
       (tc/order-by [:SRC :phase :trend])
-      (map-columns* :color-order [:trend] trend-order
-                    :DemandMet   [:Totalpercent] (fn [e] (str "Demand Met: "
-                                                              (format "%.0f" (* e 100)) "%")))))
+      (u/map-columns* :color-order [:trend] trend-order
+                      :DemandMet   [:Totalpercent] (fn [e] (str "Demand Met: "
+                                                                (format "%.0f" (* e 100)) "%")))))
 
 ;;We can move these elsewhere...
 ;;per https://groups.google.com/g/vega-js/c/_3JwxvraWCQ/m/WGERWhqfBgAJ
@@ -513,22 +465,22 @@
 ;;strength and fill stats across a branch.
 (defn agg-branch-data [ds]
   (-> ds
-      (map-columns* :SRC2 [:SRC] (fn [SRC] (subs SRC 0 2))
-                    :ACSTR [:AC :STR] dfn/*
-                    :RCSTR [:RC :STR] dfn/*
-                    :NGSTR [:NG :STR] dfn/*)
-       (tc/group-by [:BRANCH :phase])
-       (aggregate-columns*  {:RApercent dfn/mean
-                             :RCpercent dfn/mean
-                             :RAunavailpercent dfn/mean
-                             :RCunavailpercent dfn/mean
-                             :Totalpercent dfn/mean
-                             :UnmetPercent dfn/mean
-                             :UnmetOverlapPercent dfn/mean
-                             :ACSTR dfn/sum
-                             :RCSTR dfn/sum
-                             :NGSTR dfn/sum})
-       (tc/map-columns :PaxLabel [:ACSTR :RCSTR :NGSTR] (fn [ac rc ng] (pax-label ac rc ng)))))
+      (u/map-columns* :SRC2 [:SRC] (fn [SRC] (subs SRC 0 2))
+                      :ACSTR [:AC :STR] dfn/*
+                      :RCSTR [:RC :STR] dfn/*
+                      :NGSTR [:NG :STR] dfn/*)
+      (tc/group-by [:BRANCH :phase])
+      (u/aggregate-columns*  {:RApercent dfn/mean
+                              :RCpercent dfn/mean
+                              :RAunavailpercent dfn/mean
+                              :RCunavailpercent dfn/mean
+                              :Totalpercent dfn/mean
+                              :UnmetPercent dfn/mean
+                              :UnmetOverlapPercent dfn/mean
+                              :ACSTR dfn/sum
+                              :RCSTR dfn/sum
+                              :NGSTR dfn/sum})
+      (tc/map-columns :PaxLabel [:ACSTR :RCSTR :NGSTR] (fn [ac rc ng] (pax-label ac rc ng)))))
 
 ;;Since we use a clojure map for our spec, we can trivially derive
 ;;new specs by messing with the map.
@@ -615,9 +567,9 @@
                                  (= (r :RC) RC)
                                  (= (r :NG) NG)))))
         (tc/rename-columns  bcd->shave)
-        (map-columns*  :Totalpercent [:RApercent :RCpercent] +
-                       :UnmetPercent [:Totalpercent] (fn [x] (if (zero? x) x
-                                                                 (max (- 1.0 x) 0))))
+        (u/map-columns*  :Totalpercent [:RApercent :RCpercent] +
+                         :UnmetPercent [:Totalpercent] (fn [x] (if (zero? x) x
+                                                                   (max (- 1.0 x) 0))))
         (tc/map-rows adjust-demand)
         (join-and-clean detail))))
 
