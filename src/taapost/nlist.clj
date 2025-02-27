@@ -118,14 +118,14 @@
 ;; #first by phase (use average group by with src, ac, phase)
 ;;tom - got bit by floating point zero comparisons a lot here, need to use clojure.core/zero?
 
-;;this is mildly goofy.  kind of maxing dataframe ops...
+;;this is mildly goofy. kind of maxing dataframe ops...
 
 ;;when there is no demand in a phase, dmet is 100%
 ;;When there is no demand in a phase, emet is the max emet across all SRCs and phases.
 ;;emet will be 0 because if there is no demand, we don't have a record.
 (defn by-phase-percentages [res-df]
   (let [group-df  (-> res-df
-                      (agg-mean [:SRC :AC :phase])
+                      (agg-mean [:SRC :AC #_  :NG #_ :RC :phase]) ;;we should be going off all compos...
                       (tc/map-columns :demand-met :float64 [:NG-fill :AC-fill :RC-fill :total-quantity]
                           (fn ^double [^double ng ^double ac ^double rc ^double total]
                             (if (zero? total) 1.0 (/ (+ ng ac rc) total)))))
@@ -145,7 +145,7 @@
 (defn add-smoothed [gr col-name new-name]
   (let [from (gr col-name)
         [mn mx] (min-max from)]
-    (tc/add-column gr new-name (range mx (dec mn) -1))))
+    (tc/add-or-replace-column gr new-name (range mx (dec mn) -1))))
 
 
 (defn results-by-phase [df] (-> df (agg-mean [:SRC :AC :phase])))
@@ -157,17 +157,17 @@
 ;;compute score and excess from a path to results.txt
 ;;we want to collect sum of scores for excess and weighted.
 (defn compute-scores [results phase-weights title-strength & {:keys [smooth demand-name]}]
-  (let [scores (-> results
-                   load-results
-                   (tc/select-rows (fn [{:keys [AC NG RC]}] (> (+ AC NG RC) 0)))
-                   by-phase-percentages
-                   (u/map-columns* :weight     [:phase] phase-weights
-                                   :d-weighted [:demand-met :weight]  *
-                                   :e-weighted [:excess-met :weight]  *))]
-    (-> (tc/select-columns scores
-          [:SRC, :AC, :NG, :RC, :phase, :total-quantity, :demand-met, :excess-met,
-           :weight, :d-weighted, :e-weighted])
-        (tc/rename-columns  {:total-quantity :DemandDays}))))
+   (-> results
+       load-results
+       (tc/select-rows (fn [{:keys [AC NG RC]}] (> (+ AC NG RC) 0)))
+       by-phase-percentages
+       (u/map-columns* :weight     [:phase] phase-weights
+                       :d-weighted [:demand-met :weight]  *
+                       :e-weighted [:excess-met :weight]  *)
+       (tc/select-columns
+        [:SRC, :AC, :NG, :RC, :phase, :total-quantity, :demand-met, :excess-met,
+         :weight, :d-weighted, :e-weighted])
+       (tc/rename-columns  {:total-quantity :DemandDays})))
 
 ;;we want to roll up...
 #_
@@ -214,8 +214,7 @@
                             cnames)
         new-names  (vec (concat (filter #(not (vector? %)) colnames)
                                 ordered-names))]
-    (-> ds
-        (tc/reorder-columns new-names))))
+    (-> ds (tc/reorder-columns new-names))))
 
 (defn spread-metrics [ds phase-weights]
   (-> ds
@@ -225,7 +224,14 @@
 
 ;;legacy smoothing op:
 ;;  sort the scores in monotonically decreasing order, then assign inventory....
-
+;;  We used to not do this.  We used to smooth by "carrying down" prior values to ensure
+;;  adjacent values were >= prior.
+;;  Trying to determine if this is any better than just lerping....It's kind of faux
+;;  swapping the inventory on top of the metrics to force monotonicity.
+(defn naive-smooth [scores]
+  (->> (tc/group-by scores [:SRC] {:result-type :as-map})
+       (mapv (fn [[k v]] (add-smoothed v :AC :AC-Smooth)))
+       (apply tc/concat)))
 
 ;; def compute_scores(results_path, phase_weights, title_strength, smooth: bool, demand_name, order_writer):
 ;;     df=load_results(results_path)
@@ -282,6 +288,10 @@
 ;;     new_cols = [(' ', x) if y=='' else (x, y) for (x, y) in df.columns]
 ;;     #phase is actually named after the column here
 ;;     df.columns=pd.MultiIndex.from_tuples(new_cols, names=(None, 'OML'))
+
+;;This is different than I expected.  We choose "lowest total demand",
+;;then lowest score, then lowest excess. I figured all that would matter would be
+;;lowest score....
 
 ;; #Find the the most stressful demand by first choosing the lowest total demand, then choosing
 ;; #lowest score and then choosing lowest excess
