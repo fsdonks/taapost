@@ -10,6 +10,13 @@
             [tech.v3.dataset.reductions :as reds]
             [taapost.util :as u :refer [visualize]]
             [spork.util.io :as io]))
+
+(defn indices [xs] (zipmap xs (range)))
+(defn min-max [xs]
+  (reduce (fn [[l r] x]
+            [(min (or l x) x) (max (or r x) x)])
+          [nil nil] xs))
+
 ;;aux function to copy pandas...looks like we just drop out non-numerical.
 (defn mean [ds]
   (tc/aggregate-columns ds :type/numerical  dfn/mean #_{:separate? false}))
@@ -38,66 +45,6 @@
 (defn where [xs pred v else]
   (tech.v3.datatype/emap (fn [x] (if (pred x) v else)) nil xs))
 
-#_
-(defmacro derive-column
-  ([df colname coltype cols body]
-   (let [vars (mapv name cols)]
-     `(tc/map-columns ~colname ~coltype [~@cols]
-            (fn [~@vars]
-              ~body))))
-  ([df colname cols body]
-   (let [vars (mapv name cols)]
-     `(tc/map-columns ~colname [~@cols]
-                      (fn [~@vars]
-                        ~body)))))
-
-;; #!/usr/bin/env python
-;; # coding: utf-8
-
-;; # In[ ]:
-
-;;utils, maybe obe
-
-;; #given an ordered list of initial columns, put the rest of the columns in the dataframe at the end
-;; def reorder_columns(order, df):
-;;     cols=[c for c in order if c in df] + [c for c in df if c not in order]
-;;     return df[cols]
-
-;; def ac_not_sorted(group):
-;;     return not all(x>=y for x, y in zip(group[('AC', '')], group[('AC', '')].iloc[1:]))
-
-;; def add_smoothed(group, col_name, new_name):
-;;     col=[i for i in range(min(group[col_name]), max(group[col_name])+1)]
-;;     col.reverse()
-;;     group[new_name]=col
-;;     return group
-
-;; # # TAA Post Processing
-
-;; # ## Output Checking
-
-;; # ### Standard Capacity Analysis Run with Default Initial Conditions
-
-
-;;might not be 1:1 translation though, can't verify pandas output.
-;; (defn check-rand-results []
-;;   (let [ds (-> (io/file-path "./resources" "results.txt")
-;;                (tc/dataset {:separator "\t" :key-fn keyword}))]
-;;     (-> (tc/group-by ds [:SRC :AC])
-;;         (tc/add-columns {:row-count tc/row-count
-;;                          :group (fn [ds] (str [(-> ds :SRC first) (-> ds :AC first)]))}) ;;group is janky here.
-;;         tc/ungroup
-;;         (tc/select [:SRC :AC :rep-seed :row-count :group] (comp #(not= 12 %) :row-count)))))
-
-;; # ## Post Processing
-
-;; # We'd like to compute Score and Excess for each \[SRC, AC\] tuple.  
-;; # 
-;; # First, average NG fill, then average RC fill, then average NG fill, then sum and divide by demand for Score (note that fill is fill from demandtrends and NOT just deployed like the field was renamed in 2327)
-;; # Excess is sum of available for each component divided by demand
-
-;; # In[ ]:
-
 
 ;;output format
 
@@ -111,11 +58,6 @@
 
 ;; combined
 ;; OML SRC2 TITLE RA Qty Most Stressed Score Excess STR
-
-;; dmet='demand_met'
-;; emet='excess_met'
-(def dmet :demand-met)
-(def emet :excess-met)
 
 
 ;;Quick overview of supply variation scoring to create an OML:
@@ -169,7 +111,7 @@
 
 ;;computes a new column
 (defn compute-excess [{:keys [NG-deployable AC-deployable RC-deployable total-quantity] :as in}]
-  (tc/add-column in emet (dfn// (dfn/+ NG-deployable AC-deployable RC-deployable) total-quantity)))
+  (tc/add-column in :excess-met (dfn// (dfn/+ NG-deployable AC-deployable RC-deployable) total-quantity)))
 
 
 ;; #compute % demand met (dmet) and % excess over the demand (emet)
@@ -184,19 +126,14 @@
 (defn by-phase-percentages [res-df]
   (let [group-df  (-> res-df
                       (agg-mean [:SRC :AC :phase])
-                      (tc/map-columns dmet :float64 [:NG-fill :AC-fill :RC-fill :total-quantity]
-                         (fn ^double [^double ng ^double ac ^double rc ^double total]  (if (zero? total) 1.0 (/ (+ ng ac rc) total)))))
+                      (tc/map-columns :demand-met :float64 [:NG-fill :AC-fill :RC-fill :total-quantity]
+                          (fn ^double [^double ng ^double ac ^double rc ^double total]
+                            (if (zero? total) 1.0 (/ (+ ng ac rc) total)))))
         excess-df  (->  group-df (tc/select-rows #(not (zero? ^long (% :total-quantity)))) compute-excess)
-        max-excess (->> (excess-df emet)  (reduce dfn/max) double inc)]
-    (tc/map-columns group-df emet :float64 [:NG-deployable :AC-deployable :RC-deployable :total-quantity]
-      (fn ^double [^double ng ^double ac ^double rc ^double total]   (if (zero? total) max-excess (/ (+ ng ac rc) total))))))
-
-;; d_weighted = 'dmet_times_weight'
-;; e_weighted = 'emet_times_weight'
-;; #dmet_sum='weighted_dmet_sum'
-;; #emet_sum='weighted_emet_sum'
-;; dmet_sum=''
-;; emet_sum=''
+        max-excess (->> (excess-df :excess-met)  (reduce dfn/max) double inc)]
+    (tc/map-columns group-df :excess-met :float64 [:NG-deployable :AC-deployable :RC-deployable :total-quantity]
+        (fn ^double [^double ng ^double ac ^double rc ^double total]
+          (if (zero? total) max-excess (/ (+ ng ac rc) total))))))
 
 (defn load-results [in]
   (cond (string? in) (-> in (tc/dataset {:separator "\t" :key-fn keyword}))
@@ -207,9 +144,7 @@
 ;;maybe it's guaranteed.
 (defn add-smoothed [gr col-name new-name]
   (let [from (gr col-name)
-        [mn mx] (reduce (fn [[l r] x]
-                          [(min (or l x) x) (max (or r x) x)])
-                        [nil nil] from)]
+        [mn mx] (min-max from)]
     (tc/add-column gr new-name (range mx (dec mn) -1))))
 
 
@@ -235,11 +170,20 @@
         (tc/rename-columns  {:total-quantity :DemandDays}))))
 
 ;;we want to roll up...
+#_
 (defn consolidate-scores [ds]
   (-> ds
       (tc/group-by [:SRC :AC :NG :RC])
       (tc/aggregate {:Score #(-> % :d-weighted dfn/sum)
                      :Excess #(-> % :e-weighted dfn/sum)})
+      (tc/order-by [:Score :Excess] :desc)))
+
+;;same but faster.
+(defn consolidate-scores [ds]
+  (-> (->> ds
+           (reds/group-by-column-agg [:SRC :AC :NG :RC]
+                                     {:Score  (reds/sum :d-weighted)
+                                      :Excess (reds/sum :e-weighted)}))
       (tc/order-by [:Score :Excess] :desc)))
 
 ;;we can get closer to the exact python output with this...
@@ -248,16 +192,17 @@
 ;;we can use concat-value-with option to customize the resulting column names.
 ;;we typically want drop-missing? to be false since we lose entries most of the time
 ;;due to sparse data....
-(defn indices [xs] (zipmap xs (range)))
+
+;;This seems really complicated for what we're after.  There might be a simpler way
+;;to refactor this, or accomplish it at the dataset level.  Maybe column metadata
+;;would work.
 (def nested-cols [:DemandDays :demand-met :excess-met :weight :d-weighted :e-weighted])
 (defn reorder-nested-cols [ds phase-weights]
   (let [colnames (tc/column-names ds)
         cnames (->> colnames
                     (map-indexed vector)
-                    (filter (fn [[idx x]]
-                              (vector? x)))
-                    (mapv (fn [[idx x]]
-                           (vary-meta x assoc :idx idx))))
+                    (filter (fn [[idx x]] (vector? x)))
+                    (mapv   (fn [[idx x]] (vary-meta x assoc :idx idx))))
         phase-order (->> phase-weights keys (mapv keyword) indices)
         corder     (indices nested-cols)
         ordered-names (sort (fn [l r]
@@ -275,21 +220,12 @@
 (defn spread-metrics [ds phase-weights]
   (-> ds
       (tc/pivot->wider :phase  nested-cols
-                       {:drop-missing? false :concat-value-with (fn [phase x] [ x (keyword phase)])})
+         {:drop-missing? false :concat-value-with (fn [phase x] [ x (keyword phase)])})
       (reorder-nested-cols phase-weights)))
 
 ;;legacy smoothing op:
 ;;  sort the scores in monotonically decreasing order, then assign inventory....
 
-
-;;same but faster.
-#_
-(defn consolidate-scores [ds]
-  (-> (->> ds
-           (reds/group-by-column-agg [:SRC :AC]
-                                     {:Score  (reds/sum :d-weighted)
-                                      :Excess (reds/sum :e-weighted)}))
-       (tc/order-by [:Score :Excess] :desc)))
 
 ;; def compute_scores(results_path, phase_weights, title_strength, smooth: bool, demand_name, order_writer):
 ;;     df=load_results(results_path)
