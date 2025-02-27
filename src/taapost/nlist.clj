@@ -1,16 +1,14 @@
-;;This is a port of the legacy n-list functionality from
-;;pandas to tablecloth.  We substantially change the
-;;computation by decoupling the generation of output
-;;and not trying to retain the merged cell behavior
-;;from multi-indexed dataframes.
+;;This is a port of the legacy n-list functionality from pandas to tablecloth.
+;;We substantially change the computation by decoupling the generation of output
+;;and not trying to retain the merged cell behavior from multi-indexed
+;;dataframes.
 
-;;Instead, we compute a simple "tidy" table,
-;;and then emit that as necessary.
+;;Instead, we compute a simple "tidy" table, and then emit that as necessary.
 (ns taapost.nlist
   (:require [tablecloth.api :as tc]
             [tech.v3.datatype.functional :as dfn]
             [tech.v3.dataset.reductions :as reds]
-            [taapost.util :refer [visualize]]
+            [taapost.util :as u :refer [visualize]]
             [spork.util.io :as io]))
 ;;aux function to copy pandas...looks like we just drop out non-numerical.
 (defn mean [ds]
@@ -214,26 +212,49 @@
                         [nil nil] from)]
     (tc/add-column gr new-name (range mx (dec mn) -1))))
 
+
+(defn results-by-phase [df]
+   (-> df (agg-mean [:SRC :AC :phase])))
+
 ;;Make sure that scores are monotonically decreasing as inventory decreases
 ;;I think we can implement this more simply....We ignore all the writing bs.
 ;;Too much interweaving of IO (excel writing) for my taste.
 
 ;;compute score and excess from a path to results.txt
+;;we want to collect sum of scores for excess and weighted.
 (defn compute-scores [results phase-weights title-strength & {:keys [smooth demand-name]}]
   (let [scores (-> results
                    load-results
                    (tc/select-rows (fn [{:keys [AC NG RC]}] (> (+ AC NG RC) 0)))
                    by-phase-percentages
-                   (u/map-columns* :weight [:phase] phase-weights
+                   (u/map-columns* :weight     [:phase] phase-weights
                                    :d-weighted [:demand-met :weight]  *
-                                   :e-weighted [:excess-met :weight]  *))
-        res    (-> (tc/select-columns scores
-                   [:SRC, :AC, :NG, :RC, :phase, :total-quantity, :demand-met, :excess-met,
-                    :weight, :d-weighted, :e-weighted])
-                   results-by-phase)
+                                   :e-weighted [:excess-met :weight]  *))]
+    (-> (tc/select-columns scores
+          [:SRC, :AC, :NG, :RC, :phase, :total-quantity, :demand-met, :excess-met,
+           :weight, :d-weighted, :e-weighted])
+        (tc/rename-columns  {:total-quantity :DemandDays}))))
 
-        ]
-    ))
+;;we want to roll up...
+(defn consolidate-scores [ds]
+  (-> ds
+      (tc/group-by [:SRC :AC :NG :RC])
+      (tc/aggregate {:Score #(-> % :d-weighted dfn/sum)
+                     :Excess #(-> % :e-weighted dfn/sum)})
+      (tc/order-by [:Score :Excess] :desc)))
+
+;;legacy smoothing op:
+;;  sort the scores in monotonically decreasing order, then assign inventory....
+
+
+;;same but faster.
+#_
+(defn consolidate-scores [ds]
+  (-> (->> ds
+           (reds/group-by-column-agg [:SRC :AC]
+                                     {:Score  (reds/sum :d-weighted)
+                                      :Excess (reds/sum :e-weighted)}))
+       (tc/order-by [:Score :Excess] :desc)))
 
 ;; def compute_scores(results_path, phase_weights, title_strength, smooth: bool, demand_name, order_writer):
 ;;     df=load_results(results_path)
@@ -535,7 +556,13 @@
 
 (comment
   (def dt (-> (io/file-path "~/repos/make-one-to-n/resources/results.txt") (tc/dataset {:separator "\t" :key-fn keyword})))
-
+  (def phase-weights
+    {"comp1" 0.1
+     "phase1" 0.1
+     "phase2" 0.1
+     "phase3" 0.25
+     "phase4" 0.1
+     "comp2" 0.1})
   )
 
 
