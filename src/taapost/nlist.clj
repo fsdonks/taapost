@@ -213,8 +213,7 @@
     (tc/add-column gr new-name (range mx (dec mn) -1))))
 
 
-(defn results-by-phase [df]
-   (-> df (agg-mean [:SRC :AC :phase])))
+(defn results-by-phase [df] (-> df (agg-mean [:SRC :AC :phase])))
 
 ;;Make sure that scores are monotonically decreasing as inventory decreases
 ;;I think we can implement this more simply....We ignore all the writing bs.
@@ -242,6 +241,42 @@
       (tc/aggregate {:Score #(-> % :d-weighted dfn/sum)
                      :Excess #(-> % :e-weighted dfn/sum)})
       (tc/order-by [:Score :Excess] :desc)))
+
+;;we can get closer to the exact python output with this...
+;;This is like having the multi-index jank, or tuples for column
+;;names in pandas...
+;;we can use concat-value-with option to customize the resulting column names.
+;;we typically want drop-missing? to be false since we lose entries most of the time
+;;due to sparse data....
+(defn indices [xs] (zipmap xs (range)))
+(def nested-cols [:DemandDays :demand-met :excess-met :weight :d-weighted :e-weighted])
+(defn reorder-nested-cols [ds phase-weights]
+  (let [colnames (tc/column-names ds)
+        cnames (->> colnames
+                    (map-indexed vector)
+                    (filter (fn [[idx x]]
+                              (vector? x)))
+                    (mapv (fn [[idx x]]
+                           (vary-meta x assoc :idx idx))))
+        phase-order (->> phase-weights keys (mapv keyword) indices)
+        corder     (indices nested-cols)
+        ordered-names (sort (fn [l r]
+                              (let [res (compare (-> l first corder)
+                                                 (-> r first corder))]
+                                (if (not (zero? res)) res
+                                    (compare (-> l second phase-order)
+                                             (-> r second phase-order)))))
+                            cnames)
+        new-names  (vec (concat (filter #(not (vector? %)) colnames)
+                                ordered-names))]
+    (-> ds
+        (tc/reorder-columns new-names))))
+
+(defn spread-metrics [ds phase-weights]
+  (-> ds
+      (tc/pivot->wider :phase  nested-cols
+                       {:drop-missing? false :concat-value-with (fn [phase x] [ x (keyword phase)])})
+      (reorder-nested-cols phase-weights)))
 
 ;;legacy smoothing op:
 ;;  sort the scores in monotonically decreasing order, then assign inventory....
