@@ -17,9 +17,24 @@
             [(min (or l x) x) (max (or r x) x)])
           [nil nil] xs))
 
+(def ^:dynamic *aggregate* dfn/mean)
+
 ;;aux function to copy pandas...looks like we just drop out non-numerical.
 (defn mean [ds]
   (tc/aggregate-columns ds :type/numerical  dfn/mean #_{:separate? false}))
+
+;;this is a quick swap out to see if we get different results for our aggregate...
+(defn naive-median ^double [xs]
+  (let [n (count xs)
+        sorted   (->> xs sort)
+        ^objects
+        arr (.array  ^clojure.lang.ArraySeq sorted)]
+    (if (odd? n)
+      (double (nth arr (inc (/ n 2))))
+      (double (nth arr (/ n 2))))))
+
+(defn median-reducer [colname]
+  (reds/reducer->column-reducer (fn ([acc x]))))
 
 ;;we can account for grouped data...
 ;;as pandas does natively.
@@ -31,10 +46,12 @@
                  (when-not (#{:object :string :boolean} (m :datatype))
                    (m :name)))))))
 
+;;can we get a simple median?
+
 ;;this is so much faster, like 500x.  We should always prefer to
 ;;group and aggregate at the same time if possible.....
 (defn agg-mean [ds group-fields]
-  (let [original (tc/column-names ds)
+  (let [original  (tc/column-names ds)
         gf        (set group-fields)
         targets   (filter (complement gf) (numeric-column-names ds))
         fns       (->> targets (map (fn [k] [k (reds/mean k)])) (into {}))]
@@ -125,7 +142,7 @@
 ;;emet will be 0 because if there is no demand, we don't have a record.
 (defn by-phase-percentages [res-df]
   (let [group-df  (-> res-df
-                      (agg-mean [:SRC :AC #_  :NG #_ :RC :phase]) ;;we should be going off all compos...
+                      (agg-mean [:SRC :AC :NG :RC :phase]) ;;we should be going off all compos...
                       (tc/map-columns :demand-met :float64 [:NG-fill :AC-fill :RC-fill :total-quantity]
                           (fn ^double [^double ng ^double ac ^double rc ^double total]
                             (if (zero? total) 1.0 (/ (+ ng ac rc) total)))))
@@ -215,6 +232,12 @@
         new-names  (vec (concat (filter #(not (vector? %)) colnames)
                                 ordered-names))]
     (-> ds (tc/reorder-columns new-names))))
+
+;;this is currently only necessary if we want to compute the "human readable" version
+;;of worksheets from the legacy process.
+
+;;It basically unrolls the DemandDays, demand-met, excess-met, weight,
+;;d-weight, e-weight columns by phase.  So you get 24 extra columns.
 
 (defn spread-metrics [ds phase-weights]
   (-> ds

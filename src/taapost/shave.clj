@@ -408,11 +408,11 @@
                 (push txt2offset (long txt2))]]
     (-> spec
         (assoc-in [:data :values] data)
-        (deep-merge {:title {:text title :subtitle subtitle}
-                    :width width
-                    :params [(push barwidth   (long bar-width))
-                             (push txt1offset (long  txt1))
-                             (push txt2offset (long txt2))]}))))
+        (u/deep-merge {:title {:text title :subtitle subtitle}
+                       :width width
+                       :params [(push barwidth   (long bar-width))
+                                (push txt1offset (long  txt1))
+                                (push txt2offset (long txt2))]}))))
 
 ;;An interactive help function; given a sequence of maps corresponding
 ;;to our trend data, we can pop an interactive view of the shavechart.
@@ -451,7 +451,7 @@
      pats
      (for [[{:keys [BRANCH]}  src-data] (->> (tc/group-by data [:BRANCH #_:SRC2] {:result-type :as-map})
                                            (sort-by (comp :SRC2 first)))]
-        (src-bar-chart (->   src-data pivot-trend records vec)
+        (src-bar-chart (->   src-data pivot-trend u/records vec)
                        :title (str BRANCH "-" title )
                        :subtitle subtitle))]))
   ([data] (branch-charts data {:title "Aggregated Modeling Results as Percentages of Demand"
@@ -507,7 +507,7 @@
      [:div
       pats
       (for [[{:keys [phase]} br-data] (tc/group-by branches  [:phase] {:result-type :as-map})]
-        (branch-bar-chart (->   br-data pivot-trend records vec)
+        (branch-bar-chart (->   br-data pivot-trend u/records vec)
                           :title (str "All Branches" "-" title )
                           :subtitle (case phase
                                       "comp1" "Campaigning"
