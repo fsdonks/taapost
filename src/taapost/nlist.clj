@@ -33,6 +33,11 @@
       (double (nth arr (inc (/ n 2))))
       (double (nth arr (/ n 2))))))
 
+;;exact median might be good, but I am uncertain about the amount of data we have to work with....
+;;The gist is that we [probably] have all the data in memory as it stands though....
+;;The only outliers would be for either very large rep runs, or full compo runs.....
+;;We need to test the space efficiency for these cases....Might need to be smarter
+;;about how we're messing with large datasets in that case.
 (defn median-reducer [colname]
   (reds/reducer->column-reducer (fn ([acc x]))))
 
@@ -59,6 +64,8 @@
         (tc/reorder-columns original))))
 
 ;;non-broadcasting where, per craig's usage. simple replacement.
+;;we don't really use this.
+#_
 (defn where [xs pred v else]
   (tech.v3.datatype/emap (fn [x] (if (pred x) v else)) nil xs))
 
@@ -258,15 +265,17 @@
 
 ;; def compute_scores(results_path, phase_weights, title_strength, smooth: bool, demand_name, order_writer):
 ;;     df=load_results(results_path)
-;;     #sometimes all inventory was equal to 0, but we shouldn't have that. 
+
+;;     #sometimes all inventory was equal to 0, but we shouldn't have that.
 ;;     #We should have all phases if all inventory ==0
+
 ;;     df= df[(df[['AC', 'NG', 'RC']] == 0).all(axis=1)==False] ;;this is row-filtering.
 ;;     scores = by_phase_percentages(df)
 ;;     scores['weight']=scores['phase'].map(phase_weights)
 ;;     scores[d_weighted]=scores[dmet]*scores['weight']
 ;;     scores[e_weighted]=scores[emet]*scores['weight']
-;;     res = results_by_phase(scores[['SRC', 'AC', 'NG', 'RC', 
-;;                                    'phase', 'total-quantity', dmet, emet, 
+;;     res = results_by_phase(scores[['SRC', 'AC', 'NG', 'RC',
+;;                                    'phase', 'total-quantity', dmet, emet,
 ;;                                    'weight', d_weighted,
 ;;                                   e_weighted]])
 ;;     res[('Score', dmet_sum)]=res.iloc[:, res.columns.get_level_values(0)==d_weighted].sum(axis=1)
@@ -275,13 +284,17 @@
 ;;     res[('NG_inv', '')]=res.iloc[:, res.columns.get_level_values(0)=='NG'].max(axis=1)
 ;;     res[('RC_inv', '')]=res.iloc[:, res.columns.get_level_values(0)=='RC'].max(axis=1)
 ;;     res.sort_values(by=[('Score', ''), ('Excess', '')], ascending=False, inplace=True)
+
 ;;     #need to join multindex columns to single index columns in title_strength, so this the merge process
 ;;     tuples = [('SRC', ''), ('TITLE', ''), ('STR', '')]
 ;;     titles=copy.deepcopy(title_strength)
 ;;     titles.columns=pd.MultiIndex.from_tuples(tuples, names=(None, 'phase'))
 ;;     res=res.reset_index()
+
 ;;     #Make sure that scores are monotonically decreasing as inventory decreases
 ;;     res=res.groupby(('SRC', ''), sort=False)
+
+
 ;;     #add a smoothed AC column
 ;;     res=res.apply(add_smoothed, ('AC', ''), ('AC_smoothed', ''))
 ;;     res=check_order(order_writer, demand_name, res, smooth)
@@ -296,6 +309,7 @@
 
 ;; #The name of the score column used in the combined worksheet before renaming for output
 ;; combined_score_out='min_score_peak'
+
 ;; def cols_to_round(df):
 ;;     floats = df.select_dtypes('float').columns
 ;;     d = dict(zip(floats, [4 for x in floats]))
@@ -318,6 +332,7 @@
 
 ;; #Find the the most stressful demand by first choosing the lowest total demand, then choosing
 ;; #lowest score and then choosing lowest excess
+
 ;; def min_score_demand_total(results_map, row):
 ;;     score_excesses = sorted([(-1*row['Demand_Total_'+demand_name], row['Score_'+demand_name], row['Excess_'+demand_name], demand_name) 
 ;;                              for demand_name in results_map])
@@ -335,10 +350,12 @@
 
 ;; #returns the actual minimum score
 ;; #pull the score by the demand in the pull column and put it in the out column
+
 ;; def pull_score(df, pull, out):
 ;;     df[out]=df.apply(lambda row: row['Score_'+row[pull]], axis=1)
 
 ;; #need to add the excess of the min score case as well for sorting.
+
 ;; def add_excess(row, pull, left):
 ;;     score_index = left.columns.get_loc('Score_'+row[pull])
 ;;     return row.iloc[score_index+1]
@@ -350,42 +367,50 @@
 ;;             break
 ;;         sh.cell(row,column).value= None
 
-;; # When writing the multi-index dataframes to Excel, pandas put an extra blank row below the column names, which messes up the filter in LibreOffice, but not Excel.  In Excel, you could turn the filter on the blank row.  In LibreOffice, that didn't work.  Although, in LibreOffice, you can turn it on the first row and it captures the first value.  Excel does not.  So those are the filter workarounds, but it looks cleaner to just remove that blank row.
-;; def remove_blank_row(excel_path, out_path):
-;;     if isinstance(excel_path, str):
-;;         wb=openpyxl.reader.excel.load_workbook(excel_path)
-;;     else:
-;;         wb=excel_path
-;;     for sheet in wb.worksheets:
-;;         if not sheet['A3'].value:
-;;             sheet.delete_rows(3, 1)
-;;     wb.save(out_path)
-
+;Why would we have negative scores?  I think it's because we're pulling in the inventory -1? 
 ;; #For the negative scores for last cuts, set the Score to 0 for display and
 ;; #do the same with the Excess.
+
 ;; def zero_negative_scores(group_df, excess_col, score_col):
 ;;     group_df[excess_col] = np.where((group_df[score_col]<0), 0,                 
 ;;                                        group_df[excess_col])
 ;;     group_df[score_col] = np.where((group_df[score_col]<0), 0,                 
 ;;                                        group_df[score_col])    
 ;;     return group_df
-    
+
+;;Is there a smarter way to do this?
+;;Can we just sort inverted and inject records?
+
+;;We offset scores....
+;;It's possible there is no next lowest score.
+;;So there must be a 0 record for each SRC, since we
+;;don't actually run these.
+
 ;; #add the last ra cuts if there is no rc
 ;; def add_last_ra_cuts(scored_results):
-;;     #Since we are using the score from the next lowest inventory, we 
+;;     #Since we are using the score from the next lowest inventory, we
 ;;         #need to add additional records to cover the case where we we have no
 ;;         #runs from 0 RA 0 NG and 0 RC so that we could cut the entire RA if we
 ;;         #wanted to.
-;;         test_frame=scored_results[(scored_results['AC']==1) 
-;;                               & (scored_results['NG_inv']==0) 
+;;         test_frame=scored_results[(scored_results['AC']==1)
+;;                               & (scored_results['NG_inv']==0)
 ;;                               & (scored_results['RC_inv']==0)].copy()
-;;         test_frame[('Score', '')]=test_frame[('Score', '')]-1.1
+;;         test_frame[('Score', '')]=test_frame[('Score', '')]-1.1 ;;why 1.1?
 ;;         test_frame[('AC', '')]=0
 ;;         zero_cols=['demand_met', 'dmet_times_weight', 'emet_times_weight',
 ;;                    'excess_met']
 ;;         test_frame[zero_cols]=0
 ;;         return test_frame
-    
+
+;;Entry Point.
+;;Inputs:
+;;  results-map - is just a map of {demand-name path}
+;;  peak-max-workbook - I think this is just by src which demand is peak, no idea though...
+;;  out-root is probably the root path to the output, check the usage.clj....
+;;  one-n-name - guessing this is the path or wbname for output.
+;;  baseline-path - SRC Baseline workbook of STR_STR_BRANCH
+
+(defn make-one-n [results-map peak-max-workbook out-root phase-weights one-n-name baseline-path {:keys [smooth] :as opts}])
 ;; def make_one_n(results_map, peak_max_workbook, out_root, phase_weights, one_n_name, baseline_path, smooth: bool):
 ;;     print("Building ", one_n_name)
 ;;     # Read in the SRC baseline for strength and OI title.
@@ -536,7 +561,7 @@
 ;;     all_runs_df=pd.concat(concatenated_dfs)
 ;;     dummy_results_map={'all_runs' : all_runs_df}
 ;;     make_one_n(dummy_results_map, peak_max_workbook, out_root, phase_weights, one_n_name, baseline_path, smooth)
-    
+
 ;; #So far, we've had an agreed upon weighting for each phase of the demand, and
 ;; #now that we're weighting results across multiple Marathon runs, we want to say
 ;; #demand c has 75% weight and demand A has 25% weight and then multiple those
@@ -545,6 +570,7 @@
 ;; #phase_breakout looks like {comp: 75, phase_1 : .06, phase_2: .19}
 ;; #there might be cases where we don't want to concat the run name to the phase
 ;; #like if we only have one entry in the results_map.
+
 ;; def split_run_weights(results_map, results_weights, phase_breakout, 
 ;;                       concat_run: bool=True):
 ;;     all_weights={}
@@ -559,7 +585,8 @@
 
 
 (comment
-  (def dt (-> (io/file-path "~/repos/make-one-to-n/resources/results.txt") (tc/dataset {:separator "\t" :key-fn keyword})))
+  (def dt (-> (io/file-path "~/repos/make-one-to-n/resources/results.txt")
+              (tc/dataset {:separator "\t" :key-fn keyword})))
   (def phase-weights
     {"comp1" 0.1
      "phase1" 0.1
@@ -567,9 +594,23 @@
      "phase3" 0.25
      "phase4" 0.1
      "comp2" 0.1})
+  (compute-scores dt phase-weights nil)
+
   )
 
 
+;;NOT RELEVANT
+;; # When writing the multi-index dataframes to Excel, pandas put an extra blank row below the column names, which messes up the filter in LibreOffice, but not Excel.  In Excel, you could turn the filter on the blank row.  In LibreOffice, that didn't work.  Although, in LibreOffice, you can turn it on the first row and it captures the first value.  Excel does not.  So those are the filter workarounds, but it looks cleaner to just remove that blank row.
+
+;; def remove_blank_row(excel_path, out_path):
+;;     if isinstance(excel_path, str):
+;;         wb=openpyxl.reader.excel.load_workbook(excel_path)
+;;     else:
+;;         wb=excel_path
+;;     for sheet in wb.worksheets:
+;;         if not sheet['A3'].value:
+;;             sheet.delete_rows(3, 1)
+;;     wb.save(out_path)
 
 
 
