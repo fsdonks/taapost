@@ -38,8 +38,8 @@
 ;;The only outliers would be for either very large rep runs, or full compo runs.....
 ;;We need to test the space efficiency for these cases....Might need to be smarter
 ;;about how we're messing with large datasets in that case.
-(defn median-reducer [colname]
-  (reds/reducer->column-reducer (fn ([acc x]))))
+#_
+(defn median-reducer [colname] (reds/reducer->column-reducer dfn/median))
 
 ;;we can account for grouped data...
 ;;as pandas does natively.
@@ -55,13 +55,18 @@
 
 ;;this is so much faster, like 500x.  We should always prefer to
 ;;group and aggregate at the same time if possible.....
-(defn agg-mean [ds group-fields]
+(defn agg-by [col->reducer ds group-fields]
   (let [original  (tc/column-names ds)
         gf        (set group-fields)
         targets   (filter (complement gf) (numeric-column-names ds))
-        fns       (->> targets (map (fn [k] [k (reds/mean k)])) (into {}))]
+        fns       (->> targets (map (fn [k] [k (col->reducer k)])) (into {}))]
     (-> (reds/group-by-column-agg group-fields fns ds)
         (tc/reorder-columns original))))
+
+(defn agg-mean [ds group-fields] (agg-by reds/mean ds group-fields))
+;;probabilistic median for now.  We use built-ins.  Maybe we can reduce our noise
+;;a bit.
+(defn agg-median  [ds group-fields] (agg-by reds/prob-median ds group-fields))
 
 ;;non-broadcasting where, per craig's usage. simple replacement.
 ;;we don't really use this.
@@ -133,6 +138,8 @@
 ;;by worse performance for each design), which we consolidate into a simplified "final"
 ;;OML, with just [SRC AC Score Excess]
 
+ 
+
 ;;computes a new column
 (defn compute-excess [{:keys [NG-deployable AC-deployable RC-deployable total-quantity] :as in}]
   (tc/add-column in :excess-met (dfn// (dfn/+ NG-deployable AC-deployable RC-deployable) total-quantity)))
@@ -189,11 +196,10 @@
                        :d-weighted [:demand-met :weight]  *
                        :e-weighted [:excess-met :weight]  *)
        (tc/select-columns
-        [:SRC, :AC, :NG, :RC, :phase, :total-quantity, :demand-met, :excess-met,
-         :weight, :d-weighted, :e-weighted])
-       (tc/rename-columns  {:total-quantity :DemandDays})))
+        [:SRC :AC :NG :RC :phase :total-quantity :demand-met :excess-met :weight :d-weighted :e-weighted])
+       (tc/rename-columns {:total-quantity :DemandDays})))
 
-;;we want to roll up...
+;;works but OBE.
 #_
 (defn consolidate-scores [ds]
   (-> ds
@@ -202,7 +208,9 @@
                      :Excess #(-> % :e-weighted dfn/sum)})
       (tc/order-by [:Score :Excess] :desc)))
 
-;;same but faster.
+;;same but way faster.
+;;We can just use this to build lookup table we can join on after
+;;we compute the spread jank.
 (defn consolidate-scores [ds]
   (-> (->> ds
            (reds/group-by-column-agg [:SRC :AC :NG :RC]
@@ -263,6 +271,8 @@
        (mapv (fn [[k v]] (add-smoothed v :AC :AC-Smooth)))
        (apply tc/concat)))
 
+
+;;The legacy compute_scores 
 ;; def compute_scores(results_path, phase_weights, title_strength, smooth: bool, demand_name, order_writer):
 ;;     df=load_results(results_path)
 

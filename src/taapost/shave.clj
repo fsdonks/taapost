@@ -14,13 +14,6 @@
             [spork.util.io :as io]
             [clojure.data.json :as json]))
 
-(defn unjson [in]
-  (w/postwalk
-   (fn [frm]
-     (if (map? frm)
-       (zipmap (map keyword (keys frm)) (vals frm))
-       frm)) in))
-
 (defn col-mean [k] #(-> % (get k) dfn/mean))
 ;;aspect ratio.
 (defn ar [pw ph h]

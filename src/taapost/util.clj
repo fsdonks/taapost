@@ -1,7 +1,9 @@
 (ns taapost.util
   (:require [spork.cljgui.components [swing :as gui]]
             [tablecloth.api :as tc]
-            [tech.v3.datatype.functional :as dfn]))
+            [tech.v3.datatype.functional :as dfn]
+            [clojure.walk :as w]
+            [clojure.data.json :as json]))
 
 ;;a little helper ported from spork.util.table to tablecloth.
 ;;useful for looking at intermediate tables...
@@ -62,3 +64,11 @@
                             :product dfn/mean}))"
   [ds fns]
   (tc/aggregate-columns ds (vec (keys fns)) (vec (vals fns))))
+
+
+(defn unjson [in]
+  (w/postwalk
+   (fn [frm]
+     (if (map? frm)
+       (zipmap (map keyword (keys frm)) (vals frm))
+       frm)) in))
