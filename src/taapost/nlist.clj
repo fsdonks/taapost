@@ -11,6 +11,9 @@
             [taapost.util :as u :refer [visualize]]
             [spork.util.io :as io]))
 
+;;utils
+;;=====
+
 (defn indices [xs] (zipmap xs (range)))
 (defn min-max [xs]
   (reduce (fn [[l r] x]
@@ -75,6 +78,9 @@
   (tech.v3.datatype/emap (fn [x] (if (pred x) v else)) nil xs))
 
 
+;;N List Computation
+;;==================
+
 ;;output format
 
 ;;                         Demand Days
@@ -138,8 +144,6 @@
 ;;by worse performance for each design), which we consolidate into a simplified "final"
 ;;OML, with just [SRC AC Score Excess]
 
- 
-
 ;;computes a new column
 (defn compute-excess [{:keys [NG-deployable AC-deployable RC-deployable total-quantity] :as in}]
   (tc/add-column in :excess-met (dfn// (dfn/+ NG-deployable AC-deployable RC-deployable) total-quantity)))
@@ -199,7 +203,7 @@
         [:SRC :AC :NG :RC :phase :total-quantity :demand-met :excess-met :weight :d-weighted :e-weighted])
        (tc/rename-columns {:total-quantity :DemandDays})))
 
-;;works but OBE.
+;;works but OBE.  This is a slow path.
 #_
 (defn consolidate-scores [ds]
   (-> ds
@@ -211,6 +215,8 @@
 ;;same but way faster.
 ;;We can just use this to build lookup table we can join on after
 ;;we compute the spread jank.
+;;computes our aggregated score/excess by design point.  Similar to what we
+;;get on the final worksheet.
 (defn consolidate-scores [ds]
   (-> (->> ds
            (reds/group-by-column-agg [:SRC :AC :NG :RC]
@@ -272,7 +278,35 @@
        (apply tc/concat)))
 
 
-;;The legacy compute_scores 
+;;don't do much right now....
+(defn combine [results peaks]
+  results)
+;;sketching out our skeleton here...
+
+;;for each result in results-map
+;;  compute (consolidated) scores for each entry (path) in the results-map
+;;  - this requires leveraging peak-max to determine the max demand, which informs our scoring and eventual combination step..
+;;  add spread-metrics for each results map to create human-readable workbooks
+;;  join src_str_branch by src
+;;combine the results thusly
+;;  for each [src ac rc ng] design
+;;  where more than one result exists, pick the one with the most stressful demand.
+;;    where most stressful demand is defined as
+;;      the lowest score, excess, most peak demand, total demand days.
+(defn make-one-n [results-map peak-max-workbook out-root phase-weights one-n-name baseline-path {:keys [smooth] :as opts}]
+  (let [title-strength (some-> baseline-path io/file-path tc/dataset) ;;for now...
+        consolidated   (->> (for [[k path] results-map]
+                              (let [in (-> path
+                                           (io/file-path "~/repos/make-one-to-n/resources/results.txt")
+                                           (tc/dataset {:separator "\t" :key-fn keyword}))
+                                    scores  (-> in (compute-scores phase-weights title-strength))
+                                    consolidated (consolidate-scores scores)
+                                    wide         (-> scores (spread-metrics phase-weights))]
+                                [k {:consolidated consolidated :spread wide}]))
+                            (into {}))]
+    (combine consolidated peak-max-workbook)))
+
+;;The legacy compute_scores
 ;; def compute_scores(results_path, phase_weights, title_strength, smooth: bool, demand_name, order_writer):
 ;;     df=load_results(results_path)
 
@@ -420,7 +454,7 @@
 ;;  one-n-name - guessing this is the path or wbname for output.
 ;;  baseline-path - SRC Baseline workbook of STR_STR_BRANCH
 
-(defn make-one-n [results-map peak-max-workbook out-root phase-weights one-n-name baseline-path {:keys [smooth] :as opts}])
+
 ;; def make_one_n(results_map, peak_max_workbook, out_root, phase_weights, one_n_name, baseline_path, smooth: bool):
 ;;     print("Building ", one_n_name)
 ;;     # Read in the SRC baseline for strength and OI title.
@@ -607,20 +641,6 @@
   (compute-scores dt phase-weights nil)
 
   )
-
-
-;;NOT RELEVANT
-;; # When writing the multi-index dataframes to Excel, pandas put an extra blank row below the column names, which messes up the filter in LibreOffice, but not Excel.  In Excel, you could turn the filter on the blank row.  In LibreOffice, that didn't work.  Although, in LibreOffice, you can turn it on the first row and it captures the first value.  Excel does not.  So those are the filter workarounds, but it looks cleaner to just remove that blank row.
-
-;; def remove_blank_row(excel_path, out_path):
-;;     if isinstance(excel_path, str):
-;;         wb=openpyxl.reader.excel.load_workbook(excel_path)
-;;     else:
-;;         wb=excel_path
-;;     for sheet in wb.worksheets:
-;;         if not sheet['A3'].value:
-;;             sheet.delete_rows(3, 1)
-;;     wb.save(out_path)
 
 
 
