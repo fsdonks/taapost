@@ -1,10 +1,17 @@
 (ns taapost.util
   (:require [spork.cljgui.components [swing :as gui]]
+            [spork.util [io :as io]]
             [tablecloth.api :as tc]
             [tech.v3.datatype.functional :as dfn]
             [clojure.walk :as w]
             [clojure.data.json :as json]))
 
+(defn as-dataset [obj]
+  (cond (tc/dataset? obj) obj
+        (string? obj) (-> obj
+                          io/file-path
+                          (tc/dataset {:separator "\t" :key-fn keyword}))
+        :else (throw (ex-info "don't know how to coerce to dataset?!" {:in obj}))))
 ;;a little helper ported from spork.util.table to tablecloth.
 ;;useful for looking at intermediate tables...
 (defn visualize   [obj & {:keys [title sorted] :or {title "some data" sorted true}}]

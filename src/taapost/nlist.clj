@@ -280,7 +280,9 @@
 
 ;;don't do much right now....
 (defn combine [results peaks]
+  (println ["I DON'T DO ANYTHING BRO"])
   results)
+
 ;;sketching out our skeleton here...
 
 ;;for each result in results-map
@@ -294,12 +296,10 @@
 ;;    where most stressful demand is defined as
 ;;      the lowest score, excess, most peak demand, total demand days.
 (defn make-one-n [results-map peak-max-workbook out-root phase-weights one-n-name baseline-path {:keys [smooth] :as opts}]
-  (let [title-strength (some-> baseline-path io/file-path tc/dataset) ;;for now...
+  (let [title-strength (some-> baseline-path u/as-dataset) ;;for now...
         consolidated   (->> (for [[k path] results-map]
-                              (let [in (-> path
-                                           (io/file-path "~/repos/make-one-to-n/resources/results.txt")
-                                           (tc/dataset {:separator "\t" :key-fn keyword}))
-                                    scores  (-> in (compute-scores phase-weights title-strength))
+                              (let [in           (-> path u/as-dataset)
+                                    scores       (-> in (compute-scores phase-weights title-strength))
                                     consolidated (consolidate-scores scores)
                                     wide         (-> scores (spread-metrics phase-weights))]
                                 [k {:consolidated consolidated :spread wide}]))
