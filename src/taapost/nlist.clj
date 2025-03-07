@@ -36,6 +36,11 @@
       (double (nth arr (inc (/ n 2))))
       (double (nth arr (/ n 2))))))
 
+;;dupe from shavechart, maybe move to util...
+(defn read-unit-detail [path]
+  (-> (tc/dataset path {:key-fn keyword})
+      (tc/select-columns [:SRC :TITLE :STR :BRANCH])))
+
 ;;exact median might be good, but I am uncertain about the amount of data we have to work with....
 ;;The gist is that we [probably] have all the data in memory as it stands though....
 ;;The only outliers would be for either very large rep runs, or full compo runs.....
@@ -303,14 +308,21 @@
 ;;  where more than one result exists, pick the one with the most stressful demand.
 ;;    where most stressful demand is defined as
 ;;      the lowest score, excess, most peak demand, total demand days.
+
+;;we need to add peaks.  That would make it easy to add to our sorting criteria...
+;;If we have [Score Excess TotalDemand Peak] then
+;;we just sort (within a design) by [-Score -Excess Peak TotalDemand]
+
+;;for combining, we can just concat the datasets, group-by [src ac rc ng], sort by
+;;stress, pick the first result.
 (defn make-one-n [results-map peak-max-workbook out-root phase-weights one-n-name baseline-path {:keys [smooth] :as opts}]
   (let [title-strength (some-> baseline-path u/as-dataset) ;;for now...
         consolidated   (->> (for [[k path] results-map]
                               (let [in           (-> path u/as-dataset)
-                                    scores       (-> in (compute-scores phase-weights title-strength))
-                                    consolidated (consolidate-scores scores)
+                                    scores       (-> in (compute-scores phase-weights title-strength)  (tc/add-column :scenario k))
+                                    ;;consolidated (consolidate-scores scores)
                                     wide         (-> scores (spread-metrics phase-weights))]
-                                [k {:consolidated consolidated :spread wide}]))
+                                [k wide]))
                             (into {}))]
     (combine consolidated peak-max-workbook)))
 
@@ -639,6 +651,9 @@
 (comment
   (def dt (-> (io/file-path "~/repos/make-one-to-n/resources/results.txt")
               (tc/dataset {:separator "\t" :key-fn keyword})))
+
+  (read-unit-detail (io/file-path "~/SRC_STR_BRANCH.xlsx")
+
   (def phase-weights
     {"comp1" 0.1
      "phase1" 0.1
@@ -647,6 +662,11 @@
      "phase4" 0.1
      "comp2" 0.1})
   (compute-scores dt phase-weights nil)
+
+  (def results-map {"A" "~/repos/make-one-to-n/resources/results.txt"
+                    "B" "~/repos/make-one-to-n/resources/results.txt"})
+
+  (make-one-n results-map nil #_peak-max-workbook nil #_out-root phase-weights nil #_one-n-name "../make-one-to-n/resources/SRC_BASELINE.xlsx" {})
 
   )
 
