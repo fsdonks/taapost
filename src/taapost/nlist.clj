@@ -259,12 +259,21 @@
 
 ;;It basically unrolls the DemandDays, demand-met, excess-met, weight,
 ;;d-weight, e-weight columns by phase.  So you get 24 extra columns.
+(defn summary-cols [phase-weights]
+  (->> (for [from [:e-weighted :d-weighted]]
+         [from (vec (for [ph (map keyword (keys phase-weights))]
+                      [from ph]))])
+       (into {})))
 
 (defn spread-metrics [ds phase-weights]
-  (-> ds
-      (tc/pivot->wider :phase  nested-cols
-         {:drop-missing? false :concat-value-with (fn [phase x] [ x (keyword phase)])})
-      (reorder-nested-cols phase-weights)))
+  (let [mcols (summary-cols phase-weights)]
+    (-> ds
+        (tc/pivot->wider :phase  nested-cols
+           {:drop-missing? false :concat-value-with (fn [phase x] [ x (keyword phase)])})
+        (reorder-nested-cols phase-weights)
+        (tc/map-rows (fn [row]
+                       {:Score  (->> (mcols :d-weighted) (map #(get row % 0)) (reduce + 0))
+                        :Excess (->> (mcols :e-weighted) (map #(get row % 0)) (reduce + 0 ))})))))
 
 ;;legacy smoothing op:
 ;;  sort the scores in monotonically decreasing order, then assign inventory....
@@ -276,7 +285,6 @@
   (->> (tc/group-by scores [:SRC] {:result-type :as-map})
        (mapv (fn [[k v]] (add-smoothed v :AC :AC-Smooth)))
        (apply tc/concat)))
-
 
 ;;don't do much right now....
 (defn combine [results peaks]
@@ -416,10 +424,10 @@
 ;; #do the same with the Excess.
 
 ;; def zero_negative_scores(group_df, excess_col, score_col):
-;;     group_df[excess_col] = np.where((group_df[score_col]<0), 0,                 
+;;     group_df[excess_col] = np.where((group_df[score_col]<0), 0,
 ;;                                        group_df[excess_col])
-;;     group_df[score_col] = np.where((group_df[score_col]<0), 0,                 
-;;                                        group_df[score_col])    
+;;     group_df[score_col] = np.where((group_df[score_col]<0), 0,
+;;                                        group_df[score_col])
 ;;     return group_df
 
 ;;Is there a smarter way to do this?
