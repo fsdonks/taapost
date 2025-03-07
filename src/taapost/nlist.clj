@@ -315,6 +315,14 @@
 
 ;;for combining, we can just concat the datasets, group-by [src ac rc ng], sort by
 ;;stress, pick the first result.
+
+;;For the final pass (emission), we can traverse the cols that are vector names,
+;;concat into a nice string name, then dump to excel or tsv as normal.
+
+;;Currently missing:
+;;  verify minimal cuts (e.g. 0 AC)
+;;  revisit smoothing
+;;  check monotonicity
 (defn make-one-n [results-map peak-max-workbook out-root phase-weights one-n-name baseline-path {:keys [smooth] :as opts}]
   (let [title-strength (some-> baseline-path u/as-dataset) ;;for now...
         consolidated   (->> (for [[k path] results-map]
