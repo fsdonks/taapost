@@ -278,7 +278,7 @@
         (reorder-nested-cols phase-weights)
         (tc/map-rows (fn [row]
                        {:Score  (->> (mcols :d-weighted) (map #(get row % 0)) (reduce + 0))
-                        :Excess (->> (mcols :e-weighted) (map #(get row % 0)) (reduce + 0 ))})))))
+                        :Excess (->> (mcols :e-weighted) (map #(get row % 0)) (reduce + 0))})))))
 
 ;;legacy smoothing op:
 ;;  sort the scores in monotonically decreasing order, then assign inventory....
@@ -291,11 +291,6 @@
        (mapv (fn [[k v]] (add-smoothed v :AC :AC-Smooth)))
        (apply tc/concat)))
 
-;;don't do much right now....
-(defn combine [results peaks]
-  (println ["I DON'T DO ANYTHING BRO"])
-  results)
-
 ;;sketching out our skeleton here...
 
 ;;for each result in results-map
@@ -304,6 +299,7 @@
 ;;  add spread-metrics for each results map to create human-readable workbooks
 ;;  join src_str_branch by src
 ;;combine the results thusly
+
 ;;  for each [src ac rc ng] design
 ;;  where more than one result exists, pick the one with the most stressful demand.
 ;;    where most stressful demand is defined as
@@ -312,6 +308,23 @@
 ;;we need to add peaks.  That would make it easy to add to our sorting criteria...
 ;;If we have [Score Excess TotalDemand Peak] then
 ;;we just sort (within a design) by [-Score -Excess Peak TotalDemand]
+
+;;need to append peak to the record.
+;;assume peak maps [src demand-name] -> peak demand quantity.
+;;we can just add the peak column and use it for sorting...
+
+;;we really want to sort among a batch of records though....
+;;not sure if we can make the reducer work out of the box.
+
+;;Assume peak is already present in results.
+;;group-by-agg
+(defn combine [results peak-max]
+  results
+  #_
+  (let [ds   (->> results  vals)
+        aggd (reds/group-by-column-agg [:SRC :AC :NG :RC] {} ds)]
+    ))
+
 
 ;;for combining, we can just concat the datasets, group-by [src ac rc ng], sort by
 ;;stress, pick the first result.
@@ -325,6 +338,7 @@
 ;;  check monotonicity
 (defn make-one-n [results-map peak-max-workbook out-root phase-weights one-n-name baseline-path {:keys [smooth] :as opts}]
   (let [title-strength (some-> baseline-path u/as-dataset) ;;for now...
+        peaks          (parse-peaks peak-max-workbook)  ;;we just need the demand records for each result....
         consolidated   (->> (for [[k path] results-map]
                               (let [in           (-> path u/as-dataset)
                                     scores       (-> in (compute-scores phase-weights title-strength)  (tc/add-column :scenario k))
@@ -333,6 +347,16 @@
                                 [k wide]))
                             (into {}))]
     (combine consolidated peak-max-workbook)))
+
+;;beautification of results.
+;;we just go through and concat the vector column names for now...
+(defn simple-names [d]
+  (let [cnames (->> d
+                    tc/column-names
+                    (map (fn [x] (if (vector? x)
+                                   (->> x (map name) (clojure.string/join "-") keyword)
+                                   x))))]
+    (tc/rename-columns d (zipmap (tc/column-names d) cnames))))
 
 ;;The legacy compute_scores
 ;; def compute_scores(results_path, phase_weights, title_strength, smooth: bool, demand_name, order_writer):
@@ -659,8 +683,8 @@
 (comment
   (def dt (-> (io/file-path "~/repos/make-one-to-n/resources/results.txt")
               (tc/dataset {:separator "\t" :key-fn keyword})))
-
-  (read-unit-detail (io/file-path "~/SRC_STR_BRANCH.xlsx")
+#_
+  (read-unit-detail (io/file-path "~/SRC_STR_BRANCH.xlsx"))
 
   (def phase-weights
     {"comp1" 0.1
