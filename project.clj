@@ -8,7 +8,9 @@
                                                             com.taoensso/timbre
                                                             com.taoensso/encore
                                                             com.taoensso/truss]]
-                 [org.dhatim/fastexcel-reader "0.12.8" :exclusions [org.apache.poi/poi-ooxml]]
+                 [org.dhatim/fastexcel-reader "0.12.8" :exclusions [org.apache.poi/poi-ooxml org.apache.commons/commons-compress]]
+                 ;;needed for docjure....
+                 [commons-io/commons-io "2.11.0"]
                  [roz/roz  "b88bc3617d467254f37c4914c91b41aab734f0cb"
                   :exclusions [com.taoennso/timbre com.taoennso/encore]]
                  [org.scicloj/tableplot "1-beta9.1"]
@@ -17,7 +19,11 @@
                  [com.taoensso/encore  "3.128.0"]
                  [com.taoensso/truss "1.12.0"]
                  ;;we should be picking this up but aren't....
-                 [batik-rasterize "0.1.2"]
+                 [xerces/xercesImpl "2.12.2"]
+                 [batik-rasterize "0.1.2" :exclusions [xml-apis org.clojure/clojure xerces/xerces org.apache.xmlgraphics/batik-transcoder
+                                                       org.apache.xmlgraphics/batik-codec org.apache.xmlgraphics/batik-anim
+                                                       org.apache.xmlgraphics/xmlgraphics-commons]]
+                 [org.apache.xmlgraphics/batik-all "1.18"]
                  [spork "0.2.1.8-SNAPSHOT"
                   :exclusions [org.clojure/tools.reader]]]
   :jvm-opts ^:replace ["-Xmx4g" "-XX:NewSize=200m"]

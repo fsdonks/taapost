@@ -8,6 +8,7 @@
   (:require [tablecloth.api :as tc]
             [tech.v3.datatype.functional :as dfn]
             [tech.v3.dataset.reductions :as reds]
+            [tech.v3.libs.fastexcel]
             [taapost.util :as u :refer [visualize]]
             [spork.util.io :as io]))
 
@@ -277,7 +278,8 @@
            {:drop-missing? false :concat-value-with (fn [phase x] [ x (keyword phase)])})
         (reorder-nested-cols phase-weights)
         (tc/map-rows (fn [row]
-                       {:Score  (->> (mcols :d-weighted) (map #(get row % 0)) (reduce + 0))
+                       {:TotalDemand (->> (mcols :DemandDays) (map #(get row % 0)) (reduce + 0))
+                        :Score  (->> (mcols :d-weighted) (map #(get row % 0)) (reduce + 0))
                         :Excess (->> (mcols :e-weighted) (map #(get row % 0)) (reduce + 0))})))))
 
 ;;legacy smoothing op:
@@ -315,6 +317,7 @@
 
 ;;we really want to sort among a batch of records though....
 ;;not sure if we can make the reducer work out of the box.
+;;We can aggregate a new dataset
 
 ;;Assume peak is already present in results.
 ;;group-by-agg
@@ -325,27 +328,50 @@
         aggd (reds/group-by-column-agg [:SRC :AC :NG :RC] {} ds)]
     ))
 
+;;This is just invoking taa.demandanalysis/maxes->xlsx!
+;;we can do that in-memory though.
+(defn parse-peaks [wb])
+
+;;we can see if group-by and sorting is slow.  for now, just do the
+;;naive version?
 
 ;;for combining, we can just concat the datasets, group-by [src ac rc ng], sort by
-;;stress, pick the first result.
+;;stress, pick the first result....
+
+;;Alternately, just reduce over the dataset and collect the min by that comparison criteria.
+;;E.g. find the minimum performance.
+
+(def score-key (juxt :Score :Excess (comp - :TotalDemand) (comp - :Peak)))
+(defn most-stressful [d]
+  (->> (for [[{:keys [SRC AC RC NG]} data] (tc/group-by d [:SRC :AC :RC :NG] {:result-type :as-map})]
+         (-> data
+             (tc/order-by score-key)
+             (tc/select-rows [0])))
+       (apply tc/concat)))
+
+(defn group-by-row-agg [group-cols ds])
 
 ;;For the final pass (emission), we can traverse the cols that are vector names,
 ;;concat into a nice string name, then dump to excel or tsv as normal.
 
 ;;Currently missing:
+;;  allow caller to specify median vs mean.
 ;;  verify minimal cuts (e.g. 0 AC)
+;;  offset scores (e.g. supply-at-level(n) -> score-at-level(n-1))
 ;;  revisit smoothing
 ;;  check monotonicity
+
+;;We want to handle our smoothing/offset/
 (defn make-one-n [results-map peak-max-workbook out-root phase-weights one-n-name baseline-path {:keys [smooth] :as opts}]
   (let [title-strength (some-> baseline-path u/as-dataset) ;;for now...
         peaks          (parse-peaks peak-max-workbook)  ;;we just need the demand records for each result....
         consolidated   (->> (for [[k path] results-map]
                               (let [in           (-> path u/as-dataset)
-                                    scores       (-> in (compute-scores phase-weights title-strength)  (tc/add-column :scenario k))
-                                    ;;consolidated (consolidate-scores scores)
-                                    wide         (-> scores (spread-metrics phase-weights))]
-                                [k wide]))
-                            (into {}))]
+                                    scores       (-> in (compute-scores phase-weights title-strength))
+                                    ;;temporary peak for testing...
+                                    wide         (-> scores (spread-metrics phase-weights)  (tc/add-columns {:Scenario k :Peak 1}))]
+                                wide))
+                            (apply tc/concat))]
     (combine consolidated peak-max-workbook)))
 
 ;;beautification of results.
@@ -357,6 +383,10 @@
                                    (->> x (map name) (clojure.string/join "-") keyword)
                                    x))))]
     (tc/rename-columns d (zipmap (tc/column-names d) cnames))))
+
+(defn narrow [ds]
+  (let [cnames (->> (tc/column-names ds) (filterv (complement vector?)))]
+    (tc/select-columns ds cnames)))
 
 ;;The legacy compute_scores
 ;; def compute_scores(results_path, phase_weights, title_strength, smooth: bool, demand_name, order_writer):

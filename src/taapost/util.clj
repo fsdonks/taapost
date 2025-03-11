@@ -1,6 +1,7 @@
 (ns taapost.util
   (:require [spork.cljgui.components [swing :as gui]]
-            [spork.util [io :as io]]
+            [spork.util [io :as io] [table :as tbl]]
+            [spork.util.excel.core :as xl]
             [tablecloth.api :as tc]
             [tech.v3.datatype.functional :as dfn]
             [clojure.walk :as w]
@@ -12,6 +13,13 @@
                           io/file-path
                           (tc/dataset {:separator "\t" :key-fn keyword}))
         :else (throw (ex-info "don't know how to coerce to dataset?!" {:in obj}))))
+
+;;backwards compatibility with spork to make it easy to dump xlsx...
+(extend-protocol tbl/ITabular
+  tech.v3.dataset.impl.dataset.Dataset
+  (table-fields  [t] (tc/column-names t))
+  (table-columns [t] (vec (vals t))))
+
 ;;a little helper ported from spork.util.table to tablecloth.
 ;;useful for looking at intermediate tables...
 (defn visualize   [obj & {:keys [title sorted] :or {title "some data" sorted true}}]

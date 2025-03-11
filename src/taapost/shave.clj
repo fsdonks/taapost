@@ -413,9 +413,7 @@
                            :or {title "The Title"
                                 subtitle "The SubTitle"}}]
   (let [spec (-> shave-pat
-                 (customize-spec data :title title :subtitle subtitle)
-                 (assoc-in [:data :values] data)
-                 (merge {:title {:text title :subtitle subtitle}}))]
+                 (customize-spec data :title title :subtitle subtitle))]
     (oz/view! [:div pats
                [:vega-lite  spec  { :renderer :svg}]])))
 
@@ -525,9 +523,8 @@
                           :or {title "The Title"
                                subtitle "The SubTitle"}}]
   (let [spec (-> shave-pat
-                 (assoc-in [:data :values] data)
-                 (merge {:title {:text title :subtitle subtitle}}))]
-    (oz.headless/render spec "bars.png" :pre-raster (fn [svg] (inject-patterns svg pats)))))
+                 (customize-spec data :title title :subtitle subtitle))]
+    (oz.headless/svg #_oz.headless/render spec "bars.png" #_#_:pre-raster (fn [svg] (inject-patterns svg pats)))))
 
 
 ;;campaigning/comp and branch views.
@@ -617,6 +614,9 @@
   (oz/view! (-> bcd2
                 (agg-branch-charts {:title "Aggregated Modeling Results as Percentages of Demand"
                                     :subtitle "Most Stressful Scenario By Branch"})))
+
+  ;;emission
+  (-> bcd2 pivot-trend u/records vec emit-bars)
   )
 
 ;;possible convenience macros.
