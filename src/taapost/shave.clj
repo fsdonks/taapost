@@ -514,9 +514,15 @@
 ;;move to resources or inline.
 (def pre "<svg class=\"marks\" width=\"1874\" height=\"799\" viewBox=\"0 0 1874 799\" version=\"1.1\" xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\">\n")
 
+(defn get-header [svg-in]
+  (let [l (clojure.string/index-of svg-in "<svg")
+        r (clojure.string/index-of svg-in ">")]
+    (subs svg-in l (inc r))))
+
 (defn inject-patterns [svg pats]
-  (let [head (re-find #"<svg.+/xlink.+>" pre)]
+  (let [head  (get-header svg)]
     (clojure.string/replace svg head (str head (hc/html pats)))))
+
 
 ;;we'll try to include our hatched thing here..
 (defn emit-bars [data & {:keys [title subtitle]
@@ -524,7 +530,7 @@
                                subtitle "The SubTitle"}}]
   (let [spec (-> shave-pat
                  (customize-spec data :title title :subtitle subtitle))]
-    (oz.headless/svg #_oz.headless/render spec "bars.png" #_#_:pre-raster (fn [svg] (inject-patterns svg pats)))))
+    (oz.headless/svg #_oz.headless/render spec "bars.png" :pre-raster (fn [svg] (inject-patterns svg pats)))))
 
 
 ;;campaigning/comp and branch views.
