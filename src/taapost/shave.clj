@@ -511,9 +511,6 @@
 ;;allows us to emit custom shapes/colors/patterns into stand-alone svg files.
 ;;necessary to allow us to use svg patterns for colors.
 
-;;move to resources or inline.
-(def pre "<svg class=\"marks\" width=\"1874\" height=\"799\" viewBox=\"0 0 1874 799\" version=\"1.1\" xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\">\n")
-
 (defn get-header [svg-in]
   (let [l (clojure.string/index-of svg-in "<svg")
         r (clojure.string/index-of svg-in ">")]
@@ -523,14 +520,13 @@
   (let [head  (get-header svg)]
     (clojure.string/replace svg head (str head (hc/html pats)))))
 
-
 ;;we'll try to include our hatched thing here..
-(defn emit-bars [data & {:keys [title subtitle]
+(defn emit-bars [data path & {:keys [title subtitle]
                           :or {title "The Title"
                                subtitle "The SubTitle"}}]
   (let [spec (-> shave-pat
                  (customize-spec data :title title :subtitle subtitle))]
-    (oz.headless/svg #_oz.headless/render spec "bars.png" :pre-raster (fn [svg] (inject-patterns svg pats)))))
+    (oz.headless/render spec path :pre-raster (fn [svg] (inject-patterns svg pats)))))
 
 
 ;;campaigning/comp and branch views.
@@ -621,8 +617,15 @@
                 (agg-branch-charts {:title "Aggregated Modeling Results as Percentages of Demand"
                                     :subtitle "Most Stressful Scenario By Branch"})))
 
-  ;;emission
-  (-> bcd2 pivot-trend u/records vec emit-bars)
+  ;;emission example.
+  (-> bcd2
+      (tc/select-rows
+       (fn [{:keys [BRANCH phase]}]
+         (and (= BRANCH "Aviation") (= phase "phase3"))))
+      pivot-trend
+      u/records
+      vec
+      (emit-bars "bars.jpg" :title "SomeBars" :subtitle "Cool!"))
   )
 
 ;;possible convenience macros.
