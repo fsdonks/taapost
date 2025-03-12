@@ -10,7 +10,8 @@
             [tech.v3.dataset.reductions :as reds]
             [tech.v3.libs.fastexcel]
             [taapost.util :as u :refer [visualize]]
-            [spork.util.io :as io]))
+            [spork.util.io :as io]
+            [spork.util.excel.core :as xl]))
 
 ;;utils
 ;;=====
@@ -376,6 +377,7 @@
 
 ;;beautification of results.
 ;;we just go through and concat the vector column names for now...
+;;e.g. [:phase1 :e-met] -> "phase1-emet"
 (defn simple-names [d]
   (let [cnames (->> d
                     tc/column-names
@@ -384,6 +386,7 @@
                                    x))))]
     (tc/rename-columns d (zipmap (tc/column-names d) cnames))))
 
+;;drop all the intermediate computed fields...
 (defn narrow [ds]
   (let [cnames (->> (tc/column-names ds) (filterv (complement vector?)))]
     (tc/select-columns ds cnames)))
@@ -728,7 +731,10 @@
   (def results-map {"A" "~/repos/make-one-to-n/resources/results.txt"
                     "B" "~/repos/make-one-to-n/resources/results.txt"})
 
-  (make-one-n results-map nil #_peak-max-workbook nil #_out-root phase-weights nil #_one-n-name "../make-one-to-n/resources/SRC_BASELINE.xlsx" {})
+  (def res (make-one-n results-map nil #_peak-max-workbook nil #_out-root phase-weights nil #_one-n-name "../make-one-to-n/resources/SRC_BASELINE.xlsx" {}))
+  ;;dump results to a file...
+  (->> (-> res simple-names  (tc/rename-columns (fn [k] (name k))))
+       (spork.util.excel.core/table->xlsx "res.xlsx" "results"))
 
   )
 

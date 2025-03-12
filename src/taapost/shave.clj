@@ -546,7 +546,7 @@
   ([data {:keys [title subtitle root] :as opts}]
    (let [root (or root "charts/branch")
          data (tc/map-columns data :SRC2 [:SRC] (fn [SRC] (subs SRC 0 2)))]
-     (doseq [[{:keys [BRANCH]}  src-data] (->> (tc/group-by data [:BRANCH #_:SRC2] {:result-type :as-map})
+     (doseq [[{:keys [BRANCH]}  src-data] (->> (tc/group-by data [:BRANCH] {:result-type :as-map})
                                                (sort-by (comp :SRC2 first)))]
        (let [target (io/file-path root (str (clojure.string/replace BRANCH " " "_") ".jpg"))]
          (println [:emitting target])
