@@ -506,10 +506,12 @@
   ([data] (agg-branch-charts data {:title "Aggregated Modeling Results as Percentages of Demand"
                                    :subtitle ""})))
 
+
 ;;Emitting raster images
 ;;=====================
 ;;allows us to emit custom shapes/colors/patterns into stand-alone svg files.
-;;necessary to allow us to use svg patterns for colors.
+;;necessary to allow us to use svg patterns for colors, like our crosshatch
+;;patterns.
 
 (defn get-header [svg-in]
   (let [l (clojure.string/index-of svg-in "<svg")
@@ -528,8 +530,52 @@
                  (customize-spec data :title title :subtitle subtitle))]
     (oz.headless/render spec path :pre-raster (fn [svg] (inject-patterns svg pats)))))
 
+(defn emit-agg-bars [data path & {:keys [title subtitle]
+                              :or {title "The Title"
+                                   subtitle "The SubTitle"}}]
+  (let [spec (-> br-spec
+                 (customize-spec data :title title :subtitle subtitle :keyfn :BRANCH))]
+    (oz.headless/render spec path :pre-raster (fn [svg] (inject-patterns svg pats)))))
 
-;;campaigning/comp and branch views.
+;;TODO: refactor these, we can problably collapse down these four functions into one
+;;and drop the redunancy....
+
+;;Defines a visual component that lays out multiple plots for rendering, one for
+;;each branch.  Within the branch, we show a shavechart for each SRC.  One file per chart.
+(defn emit-branch-charts
+  ([data {:keys [title subtitle root] :as opts}]
+   (let [root (or root "charts/branch")
+         data (tc/map-columns data :SRC2 [:SRC] (fn [SRC] (subs SRC 0 2)))]
+     (doseq [[{:keys [BRANCH]}  src-data] (->> (tc/group-by data [:BRANCH #_:SRC2] {:result-type :as-map})
+                                               (sort-by (comp :SRC2 first)))]
+       (let [target (io/file-path root (str (clojure.string/replace BRANCH " " "_") ".jpg"))]
+         (println [:emitting target])
+         (io/make-file! target)
+         (emit-bars (->   src-data pivot-trend u/records vec)
+                    target
+                    :title (str BRANCH "-" title )
+                    :subtitle subtitle)))))
+  ([data] (emit-branch-charts data {:title "Aggregated Modeling Results as Percentages of Demand"
+                                    :subtitle "Conflict-Phase 3 Most Stressful Scenario"})))
+
+;;Defines a visual component that lays out multiple plots for rendering, one for
+;;each phase.  Within the phase, we show a shavechart containing each branch.  One file per phase.
+(defn emit-agg-branch-charts
+  ([data {:keys [title subtitle root] :as opts}]
+   (let [root (or root "charts/branch-agg")
+         branches (agg-branch-data data)]
+     (doseq [[{:keys [phase]}  br-data] (tc/group-by branches  [:phase] {:result-type :as-map})]
+       (let [target (io/file-path root (str phase ".jpg"))]
+         (println [:emitting target])
+         (io/make-file! target)
+         (emit-agg-bars (->   br-data pivot-trend u/records vec)
+                    target
+                    :title    (str "All Branches" "-" title )
+                    :subtitle (case phase
+                                "comp1" "Campaigning"
+                                subtitle))))))
+  ([data] (emit-agg-branch-charts data {:title "Aggregated Modeling Results as Percentages of Demand"
+                                        :subtitle ""})))
 
 
 ;;legacy bar chart data conversion
@@ -626,6 +672,17 @@
       u/records
       vec
       (emit-bars "bars.jpg" :title "SomeBars" :subtitle "Cool!"))
+
+  (-> bcd2
+      (tc/select-rows (fn [{:keys [phase]}] (= phase "phase3")))
+      (emit-branch-charts {:title "Aggregated Modeling Results as Percentages of Demand"
+                           :subtitle "Conflict-Phase 3 Most Stressful Scenario"
+                           :root "./charts/branch/conflict"}))
+  (-> bcd2
+      (tc/select-rows (fn [{:keys [phase]}] (= phase "phase3")))
+      (emit-agg-branch-charts {:title "Aggregated Modeling Results as Percentages of Demand"
+                               :subtitle "Conflict-Phase 3 Most Stressful Scenario"
+                               :root "./charts/branch-agg/"}))
   )
 
 ;;possible convenience macros.
