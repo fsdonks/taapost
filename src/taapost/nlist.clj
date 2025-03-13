@@ -361,6 +361,7 @@
   (-> d
       most-stressful
       (tc/rename-columns {:Scenario :Most-Stressful})
+      (tc/order-by [:Score :Excess] :desc)
       narrow))
 ;;For the final pass (emission), we can traverse the cols that are vector names,
 ;;concat into a nice string name, then dump to excel or tsv as normal.
@@ -380,8 +381,9 @@
 ;;drop all the intermediate computed fields...
 (defn narrow [ds]
   (let [cnames (->> (tc/column-names ds) (filterv (complement vector?)))]
-    (tc/select-columns ds cnames)
-    (tc/rename-columns name)))
+    (-> ds
+        (tc/select-columns cnames)
+        (tc/rename-columns name))))
 
 ;;Currently missing:
 ;;  allow caller to specify median vs mean.
@@ -409,9 +411,10 @@
     (->> (for [s scenarios]
            [s (-> consolidated
                   (tc/select-rows (fn [{:keys [Scenario]}] (= Scenario s)))
-                  (tc/order-by score-key)
+                  (tc/order-by [:Score :Excess] :desc)
                   simple-names)])
-         (into {:Combined combined}))))
+         (into {:Combined combined})
+         (xl/tables->xlsx (io/file-path out-root (str one-n-name ".xlsx"))))))
 
 (comment
   (def dt (-> (io/file-path "~/repos/make-one-to-n/resources/results.txt")
@@ -430,106 +433,16 @@
 
   (def results-map {"A" "~/repos/make-one-to-n/resources/results.txt"
                     "B" "~/repos/make-one-to-n/resources/results.txt"})
+  (def m4-books {"A" "A.xlsx"
+                 "B" "B.xlsx"})
 
-  (def res (make-one-n results-map nil #_peak-max-workbook nil #_out-root phase-weights nil #_one-n-name "../make-one-to-n/resources/SRC_BASELINE.xlsx" {}))
+  (def res (make-one-n results-map m4-books "."  phase-weights "one_n" "../make-one-to-n/resources/SRC_BASELINE.xlsx" {}))
   ;;dump results to a file...
+  #_
   (->> (-> res simple-names  (tc/rename-columns (fn [k] (name k))))
        (spork.util.excel.core/table->xlsx "res.xlsx" "results"))
 
   )
-
-
-;;The legacy compute_scores
-;; def compute_scores(results_path, phase_weights, title_strength, smooth: bool, demand_name, order_writer):
-;;     df=load_results(results_path)
-
-;;     #sometimes all inventory was equal to 0, but we shouldn't have that.
-;;     #We should have all phases if all inventory ==0
-
-;;     df= df[(df[['AC', 'NG', 'RC']] == 0).all(axis=1)==False] ;;this is row-filtering.
-;;     scores = by_phase_percentages(df)
-;;     scores['weight']=scores['phase'].map(phase_weights)
-;;     scores[d_weighted]=scores[dmet]*scores['weight']
-;;     scores[e_weighted]=scores[emet]*scores['weight']
-;;     res = results_by_phase(scores[['SRC', 'AC', 'NG', 'RC',
-;;                                    'phase', 'total-quantity', dmet, emet,
-;;                                    'weight', d_weighted,
-;;                                   e_weighted]])
-;;     res[('Score', dmet_sum)]=res.iloc[:, res.columns.get_level_values(0)==d_weighted].sum(axis=1)
-;;     res[('Excess', emet_sum)]=res.iloc[:, res.columns.get_level_values(0)==e_weighted].sum(axis=1)
-;;     res[('Demand_Total', '')]=res.iloc[:, res.columns.get_level_values(0)=='total-quantity'].sum(axis=1)
-;;     res[('NG_inv', '')]=res.iloc[:, res.columns.get_level_values(0)=='NG'].max(axis=1)
-;;     res[('RC_inv', '')]=res.iloc[:, res.columns.get_level_values(0)=='RC'].max(axis=1)
-;;     res.sort_values(by=[('Score', ''), ('Excess', '')], ascending=False, inplace=True)
-
-;;     #need to join multindex columns to single index columns in title_strength, so this the merge process
-;;     tuples = [('SRC', ''), ('TITLE', ''), ('STR', '')]
-;;     titles=copy.deepcopy(title_strength)
-;;     titles.columns=pd.MultiIndex.from_tuples(tuples, names=(None, 'phase'))
-;;     res=res.reset_index()
-
-;;     #Make sure that scores are monotonically decreasing as inventory decreases
-;;     res=res.groupby(('SRC', ''), sort=False)
-
-
-;;     #add a smoothed AC column
-;;     res=res.apply(add_smoothed, ('AC', ''), ('AC_smoothed', ''))
-;;     res=check_order(order_writer, demand_name, res, smooth)
-;;     res = pd.merge(res,
-;;           titles,
-;;           on=[('SRC', '')],
-;;           how='inner'
-;;          )
-;;     res=res.set_index(['SRC', 'AC'])
-;;     res.drop(['NG', 'RC'], axis=1, level=0, inplace=True)
-;;     return res
-
-;; #The name of the score column used in the combined worksheet before renaming for output
-;; combined_score_out='min_score_peak'
-
-;; def cols_to_round(df):
-;;     floats = df.select_dtypes('float').columns
-;;     d = dict(zip(floats, [4 for x in floats]))
-;;     d.pop(combined_score_out, None)
-;;     d.pop(('Score', dmet_sum), None)
-;;     return d
-
-;; #take any multiindex column tuple and if the second level has no value (thus a single entry for both levels),
-;; #then swap the second level with the first level.
-;; def move_col_names_down(df):
-;;     #if the last columns have an empty first level, they will get merge_celled with the previously-titled
-;;     #column, so we use ' ' instead of '' to avoid this.
-;;     new_cols = [(' ', x) if y=='' else (x, y) for (x, y) in df.columns]
-;;     #phase is actually named after the column here
-;;     df.columns=pd.MultiIndex.from_tuples(new_cols, names=(None, 'OML'))
-
-;;This is different than I expected.  We choose "lowest total demand",
-;;then lowest score, then lowest excess. I figured all that would matter would be
-;;lowest score....
-
-;; #Find the the most stressful demand by first choosing the lowest total demand, then choosing
-;; #lowest score and then choosing lowest excess
-
-;; def min_score_demand_total(results_map, row):
-;;     score_excesses = sorted([(-1*row['Demand_Total_'+demand_name], row['Score_'+demand_name], row['Excess_'+demand_name], demand_name) 
-;;                              for demand_name in results_map])
-;;     min_total, min_score, min_excess, min_demand = score_excesses[0]
-;;     return min_demand
-
-;; def min_score_demand(results_map, row):
-;;     score_excesses = sorted([(row['Score_'+demand_name], row['Excess_'+demand_name], demand_name) 
-;;                              for demand_name in results_map])
-;;     min_score, min_excess, min_demand = score_excesses[0]
-;;     return min_demand
-
-;; def min_score_demand_peak(peak_map, default_max, row):
-;;     return peak_map.get(row['SRC'], default_max)
-
-;; #returns the actual minimum score
-;; #pull the score by the demand in the pull column and put it in the out column
-
-;; def pull_score(df, pull, out):
-;;     df[out]=df.apply(lambda row: row['Score_'+row[pull]], axis=1)
 
 ;; #need to add the excess of the min score case as well for sorting.
 
@@ -537,12 +450,6 @@
 ;;     score_index = left.columns.get_loc('Score_'+row[pull])
 ;;     return row.iloc[score_index+1]
 
-;; #Given a cell in a sheet starting at row row_start and in column,clear all cell contents
-;; def clear_column(row_start, column, sh):
-;;     for row in range(row_start,sh.max_row):
-;;         if(sh.cell(row,column).value is  None):
-;;             break
-;;         sh.cell(row,column).value= None
 
 ;Why would we have negative scores?  I think it's because we're pulling in the inventory -1? 
 ;; #For the negative scores for last cuts, set the Score to 0 for display and
