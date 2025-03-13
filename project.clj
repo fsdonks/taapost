@@ -25,7 +25,9 @@
                                                        org.apache.xmlgraphics/xmlgraphics-commons]]
                  [org.apache.xmlgraphics/batik-all "1.18"]
                  [spork "0.2.1.8-SNAPSHOT"
-                  :exclusions [org.clojure/tools.reader]]]
+                  :exclusions [org.clojure/tools.reader]]
+                 [proc  "0.3.5-SNAPSHOT"
+                  :exclusions [spork]]]
   :jvm-opts ^:replace ["-Xmx4g" "-XX:NewSize=200m"]
   :plugins [[reifyhealth/lein-git-down "0.4.1"]]
   :middleware [lein-git-down.plugin/inject-properties]

@@ -10,6 +10,7 @@
             [tech.v3.dataset.reductions :as reds]
             [tech.v3.libs.fastexcel]
             [taapost.util :as u :refer [visualize]]
+            [taapost.demandanalysis :as da]
             [spork.util.io :as io]
             [spork.util.excel.core :as xl]))
 
@@ -321,17 +322,19 @@
 ;;We can aggregate a new dataset
 
 ;;Assume peak is already present in results.
-;;group-by-agg
-(defn combine [results peak-max]
-  results
-  #_
-  (let [ds   (->> results  vals)
-        aggd (reds/group-by-column-agg [:SRC :AC :NG :RC] {} ds)]
-    ))
 
 ;;This is just invoking taa.demandanalysis/maxes->xlsx!
 ;;we can do that in-memory though.
-(defn parse-peaks [wb])
+;;We parse a map of {Scenario M4-workbook-path}
+;;into a lookup table of {SRC {:keys [Scenario Peak]}}
+(defn m4books->peak-lookup
+  ([workbook-map period]
+   (->> (for [{:keys [SRC demand_name peak]} (-> workbook-map
+                                                 (da/max-demand period)
+                                                 da/maxes->records)]
+          [SRC {:Scenario demand_name :Peak peak}])
+        (into {})))
+  ([workbook-map] (m4books->peak-lookup workbook-map "Surge")))
 
 ;;we can see if group-by and sorting is slow.  for now, just do the
 ;;naive version?
@@ -350,10 +353,35 @@
              (tc/select-rows [0])))
        (apply tc/concat)))
 
-(defn group-by-row-agg [group-cols ds])
 
+;;take a dataset with both scenarios, consolidate s.t. there is only 1 record for
+;;each [SRC AC RC NG] mixture, which is the "most stressful", drop the intermediate
+;;column names
+(defn combine [d]
+  (-> d
+      most-stressful
+      (tc/rename-columns {:Scenario :Most-Stressful})
+      narrow))
 ;;For the final pass (emission), we can traverse the cols that are vector names,
 ;;concat into a nice string name, then dump to excel or tsv as normal.
+
+
+;;beautification of results.
+;;we just go through and concat the vector column names for now...
+;;e.g. [:phase1 :e-met] -> "phase1-emet"
+(defn simple-names [d]
+  (let [cnames (->> d
+                    tc/column-names
+                    (map (fn [x] (if (vector? x)
+                                   (->> x (map name) (clojure.string/join "-"))
+                                   (name x)))))]
+    (tc/rename-columns d (zipmap (tc/column-names d) cnames))))
+
+;;drop all the intermediate computed fields...
+(defn narrow [ds]
+  (let [cnames (->> (tc/column-names ds) (filterv (complement vector?)))]
+    (tc/select-columns ds cnames)
+    (tc/rename-columns name)))
 
 ;;Currently missing:
 ;;  allow caller to specify median vs mean.
@@ -363,33 +391,53 @@
 ;;  check monotonicity
 
 ;;We want to handle our smoothing/offset/
-(defn make-one-n [results-map peak-max-workbook out-root phase-weights one-n-name baseline-path {:keys [smooth] :as opts}]
-  (let [title-strength (some-> baseline-path u/as-dataset) ;;for now...
-        peaks          (parse-peaks peak-max-workbook)  ;;we just need the demand records for each result....
+(defn make-one-n [results-map m4-workbooks out-root phase-weights one-n-name src-title-str-path {:keys [smooth] :as opts}]
+  (let [title-strength (some-> src-title-str-path u/as-dataset) ;;for now...
+        peaks          (parse-peaks m4-workbooks)  ;;we just need the demand records for each result....
         consolidated   (->> (for [[k path] results-map]
                               (let [in           (-> path u/as-dataset)
                                     scores       (-> in (compute-scores phase-weights title-strength))
-                                    ;;temporary peak for testing...
-                                    wide         (-> scores (spread-metrics phase-weights)  (tc/add-columns {:Scenario k :Peak 1}))]
+                                    wide         (-> scores
+                                                     (spread-metrics phase-weights)
+                                                     (tc/add-columns {:Scenario k
+                                                                      :Peak (fn [{:keys [SRC]}]
+                                                                              (or (some-> SRC peaks :Peak) 0))}))]
                                 wide))
-                            (apply tc/concat))]
-    (combine consolidated peak-max-workbook)))
+                            (apply tc/concat))
+        scenarios (keys results-map) ;;same as Scenario field.
+        combined  (combine consolidated)]
+    (->> (for [s scenarios]
+           [s (-> consolidated
+                  (tc/select-rows (fn [{:keys [Scenario]}] (= Scenario s)))
+                  (tc/order-by score-key)
+                  simple-names)])
+         (into {:Combined combined}))))
 
-;;beautification of results.
-;;we just go through and concat the vector column names for now...
-;;e.g. [:phase1 :e-met] -> "phase1-emet"
-(defn simple-names [d]
-  (let [cnames (->> d
-                    tc/column-names
-                    (map (fn [x] (if (vector? x)
-                                   (->> x (map name) (clojure.string/join "-") keyword)
-                                   x))))]
-    (tc/rename-columns d (zipmap (tc/column-names d) cnames))))
+(comment
+  (def dt (-> (io/file-path "~/repos/make-one-to-n/resources/results.txt")
+              (tc/dataset {:separator "\t" :key-fn keyword})))
+#_
+  (read-unit-detail (io/file-path "~/SRC_STR_BRANCH.xlsx"))
 
-;;drop all the intermediate computed fields...
-(defn narrow [ds]
-  (let [cnames (->> (tc/column-names ds) (filterv (complement vector?)))]
-    (tc/select-columns ds cnames)))
+  (def phase-weights
+    {"comp1" 0.1
+     "phase1" 0.1
+     "phase2" 0.1
+     "phase3" 0.25
+     "phase4" 0.1
+     "comp2" 0.1})
+  (compute-scores dt phase-weights nil)
+
+  (def results-map {"A" "~/repos/make-one-to-n/resources/results.txt"
+                    "B" "~/repos/make-one-to-n/resources/results.txt"})
+
+  (def res (make-one-n results-map nil #_peak-max-workbook nil #_out-root phase-weights nil #_one-n-name "../make-one-to-n/resources/SRC_BASELINE.xlsx" {}))
+  ;;dump results to a file...
+  (->> (-> res simple-names  (tc/rename-columns (fn [k] (name k))))
+       (spork.util.excel.core/table->xlsx "res.xlsx" "results"))
+
+  )
+
 
 ;;The legacy compute_scores
 ;; def compute_scores(results_path, phase_weights, title_strength, smooth: bool, demand_name, order_writer):
@@ -711,33 +759,3 @@
 ;;                 k=phase
 ;;             all_weights[k]= phase_breakout[phase]*results_weights[demand_name]
 ;;     return all_weights
-
-
-(comment
-  (def dt (-> (io/file-path "~/repos/make-one-to-n/resources/results.txt")
-              (tc/dataset {:separator "\t" :key-fn keyword})))
-#_
-  (read-unit-detail (io/file-path "~/SRC_STR_BRANCH.xlsx"))
-
-  (def phase-weights
-    {"comp1" 0.1
-     "phase1" 0.1
-     "phase2" 0.1
-     "phase3" 0.25
-     "phase4" 0.1
-     "comp2" 0.1})
-  (compute-scores dt phase-weights nil)
-
-  (def results-map {"A" "~/repos/make-one-to-n/resources/results.txt"
-                    "B" "~/repos/make-one-to-n/resources/results.txt"})
-
-  (def res (make-one-n results-map nil #_peak-max-workbook nil #_out-root phase-weights nil #_one-n-name "../make-one-to-n/resources/SRC_BASELINE.xlsx" {}))
-  ;;dump results to a file...
-  (->> (-> res simple-names  (tc/rename-columns (fn [k] (name k))))
-       (spork.util.excel.core/table->xlsx "res.xlsx" "results"))
-
-  )
-
-
-
-

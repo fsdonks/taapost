@@ -19,6 +19,8 @@
          pre-raster)))
 
 (in-ns 'applied-science.darkstar)
+;;this just points us to "our" version of vega instead of the one bundled with
+;;darkstar, which is old and prone to svg errors.
 (def engine
   (let [engine (.getEngineByName (javax.script.ScriptEngineManager.) "graal.js")
         bindings (.getBindings engine javax.script.ScriptContext/ENGINE_SCOPE)]
@@ -43,6 +45,6 @@ function readFile(path, callback) {
 }
 var fs = {'readFile':readFile};
 ")
-      (.eval (slurp (clojure.java.io/file "resources/vega.js")))
-      (.eval (slurp (clojure.java.io/file "resources/vega-lite.js"))))))
+      (.eval (slurp (clojure.java.io/resource "resources/vega.js")))
+      (.eval (slurp (clojure.java.io/resource "resources/vega-lite.js"))))))
 (in-ns 'taapost.patch)
