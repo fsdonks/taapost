@@ -404,6 +404,54 @@
                                    (name x)))))]
     (tc/rename-columns d (zipmap (tc/column-names d) cnames))))
 
+;; #add the last ra cuts if there is no rc
+;; def add_last_ra_cuts(scored_results):
+;;     #Since we are using the score from the next lowest inventory, we
+;;         #need to add additional records to cover the case where we we have no
+;;         #runs from 0 RA 0 NG and 0 RC so that we could cut the entire RA if we
+;;         #wanted to.
+;;         test_frame=scored_results[(scored_results['AC']==1)
+;;                               & (scored_results['NG_inv']==0)
+;;                               & (scored_results['RC_inv']==0)].copy()
+;;         test_frame[('Score', '')]=test_frame[('Score', '')]-1.1 ;;why 1.1?
+;;         test_frame[('AC', '')]=0
+;;         zero_cols=['demand_met', 'dmet_times_weight', 'emet_times_weight',
+;;                    'excess_met']
+;;         test_frame[zero_cols]=0
+;;         return test_frame
+
+;; def drop_scores(df):
+;;   test_frame=add_last_ra_cuts(df)
+;;   #add on records to cut the last unit in the inventory.
+;;   scored_results=pd.concat([df, test_frame], ignore_index=True)
+;;   #filter out the base inventories
+;;   scored_results=scored_results[scored_results['AC']!=scored_results['max_AC_inv']]
+;;   #add one to the remaining inventory records
+;;   scored_results['AC']=scored_results['AC']+1
+;;   return scored_results
+
+;;I think instead of replacing the scores, we just add a couple of columns.
+;;We want a 2d index, of {SRC {AC LowerScore}}
+(defn drop-scores [d]
+  (->> (for [[{:keys [SRC]} data] (tc/group-by d :SRC {:result-type :as-map})]
+         (let [score-index (->> data
+                                u/records
+                                (reduce (fn [acc {:keys [AC Score Excess]}]
+                                          (assoc acc AC [Score Excess])) {}))
+               dropped-index (->> (keys score-index)
+                                  (map (fn [AC]
+                                         [AC (get score-index (dec AC) [0 0])]))
+                                  (into {}))]
+           (-> data
+               (tc/map-rows
+                (fn [{:keys [AC]}]
+                  (let [[s e] (dropped-index AC)]
+                    {:Remaining      (dec AC)
+                     :RemainingScore  s
+                     :RemainingExcess e})))
+               (tc/select-rows (fn [{:keys [Remaining]}] (>=  Remaining 0))))))
+       (apply tc/concat)))
+
 ;;  allow caller to specify median vs mean.
 ;;Currently missing:
 ;;  verify minimal cuts (e.g. 0 AC) [why does this matter?]
@@ -425,7 +473,8 @@
                                                      (spread-metrics phase-weights)
                                                      (tc/add-columns {:Scenario k
                                                                       :Peak (fn [{:keys [SRC]}]
-                                                                              (or (some-> SRC peaks :Peak) 0))}))]
+                                                                              (or (some-> SRC peaks :Peak) 0))})
+                                                     drop-scores)]
                                 wide))
                             (apply tc/concat))
         scenarios (keys results-map) ;;same as Scenario field.
@@ -492,21 +541,7 @@
 ;;So there must be a 0 record for each SRC, since we
 ;;don't actually run these.
 
-;; #add the last ra cuts if there is no rc
-;; def add_last_ra_cuts(scored_results):
-;;     #Since we are using the score from the next lowest inventory, we
-;;         #need to add additional records to cover the case where we we have no
-;;         #runs from 0 RA 0 NG and 0 RC so that we could cut the entire RA if we
-;;         #wanted to.
-;;         test_frame=scored_results[(scored_results['AC']==1)
-;;                               & (scored_results['NG_inv']==0)
-;;                               & (scored_results['RC_inv']==0)].copy()
-;;         test_frame[('Score', '')]=test_frame[('Score', '')]-1.1 ;;why 1.1?
-;;         test_frame[('AC', '')]=0
-;;         zero_cols=['demand_met', 'dmet_times_weight', 'emet_times_weight',
-;;                    'excess_met']
-;;         test_frame[zero_cols]=0
-;;         return test_frame
+
 
 ;;Entry Point.
 ;;Inputs:
