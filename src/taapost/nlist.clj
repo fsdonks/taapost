@@ -79,12 +79,26 @@
 ;;a bit.
 (defn agg-median  [ds group-fields] (agg-by reds/prob-median ds group-fields))
 
-;;non-broadcasting where, per craig's usage. simple replacement.
-;;we don't really use this.
-#_
-(defn where [xs pred v else]
-  (tech.v3.datatype/emap (fn [x] (if (pred x) v else)) nil xs))
+;;helper to allow us to project aggregation strategies.
+;;we could elevate this into a multimethod or some other registry at
+;;some point.  For now, we just support 2 known methods to make it easier
+;;to compare stuff.
+(defn get-aggregate []
+  (case *aggregate*
+    :mean   reds/mean
+    :median reds/prob-median
+    (if (fn? *aggregate* *aggregate*)
+      (throw (ex-info "unknown aggregate reducer" {:in *aggregate*})))))
 
+(defn agg-dynamic
+  "Wrapper for taapost.nlist/agg-by, infers aggregation strategy from the
+   dynvar taapost.nlist/*aggregate*, where we expect the value to either be
+   a keyword in #{:mean :median}, or a function.  If it's a function, it
+   should conform to the standard for a custom reducer, such as
+   tech.v3.dataset.reductions/prob-median or tech.v3.dataset.reductions/mean.
+   Groups the dataset by group-fields, then aggregates all the numerical fields
+   using whatever aggregation strategy is defined."
+  [ds group-fields] (agg-by (get-aggregate) ds group-fields))
 
 ;;N List Computation
 ;;==================
@@ -168,7 +182,7 @@
 ;;emet will be 0 because if there is no demand, we don't have a record.
 (defn by-phase-percentages [res-df]
   (let [group-df  (-> res-df
-                      (agg-mean [:SRC :AC :NG :RC :phase]) ;;we should be going off all compos...
+                      (agg-dynamic [:SRC :AC :NG :RC :phase]) ;;we should be going off all compos...
                       (tc/map-columns :demand-met :float64 [:NG-fill :AC-fill :RC-fill :total-quantity]
                           (fn ^double [^double ng ^double ac ^double rc ^double total]
                             (if (zero? total) 1.0 (/ (+ ng ac rc) total)))))
@@ -189,7 +203,6 @@
   (let [from (gr col-name)
         [mn mx] (min-max from)]
     (tc/add-or-replace-column gr new-name (range mx (dec mn) -1))))
-
 
 (defn results-by-phase [df] (-> df (agg-mean [:SRC :AC :phase])))
 
@@ -328,11 +341,18 @@
 ;;We parse a map of {Scenario M4-workbook-path}
 ;;into a lookup table of {SRC {:keys [Scenario Peak]}}
 (defn m4books->peak-lookup
+  "Given a map of {Scenario m4-workbook-path}, and a period that
+   maps to one of the periods in the workbook/PeriodRecords, e.g.
+   \"Surge\", we generate a lookup table of {SRC {:keys [Scenario Peak]}},
+   where we can project each SRC onto the Scenario that yielded the
+   highest peak demand."
   ([workbook-map period]
-   (->> (for [{:keys [SRC demand_name peak]} (-> workbook-map
-                                                 (da/max-demand period)
-                                                 da/maxes->records)]
-          [SRC {:Scenario demand_name :Peak peak}])
+   (->> (for [[SRC recs]  (->> (-> workbook-map
+                                   (da/max-demand period)
+                                   da/maxes->records)
+                               (group-by :SRC))]
+          (let [{:keys [SRC demand_name peak]} (->> recs (reduce (partial max-key :peak)))]
+            [SRC {:Scenario demand_name :Peak peak}]))
         (into {})))
   ([workbook-map] (m4books->peak-lookup workbook-map "Surge")))
 
@@ -353,6 +373,12 @@
              (tc/select-rows [0])))
        (apply tc/concat)))
 
+;;drop all the intermediate computed fields...
+(defn narrow [ds]
+  (let [cnames (->> (tc/column-names ds) (filterv (complement vector?)))]
+    (-> ds
+        (tc/select-columns cnames)
+        (tc/rename-columns name))))
 
 ;;take a dataset with both scenarios, consolidate s.t. there is only 1 record for
 ;;each [SRC AC RC NG] mixture, which is the "most stressful", drop the intermediate
@@ -378,24 +404,20 @@
                                    (name x)))))]
     (tc/rename-columns d (zipmap (tc/column-names d) cnames))))
 
-;;drop all the intermediate computed fields...
-(defn narrow [ds]
-  (let [cnames (->> (tc/column-names ds) (filterv (complement vector?)))]
-    (-> ds
-        (tc/select-columns cnames)
-        (tc/rename-columns name))))
-
-;;Currently missing:
 ;;  allow caller to specify median vs mean.
-;;  verify minimal cuts (e.g. 0 AC)
+;;Currently missing:
+;;  verify minimal cuts (e.g. 0 AC) [why does this matter?]
 ;;  offset scores (e.g. supply-at-level(n) -> score-at-level(n-1))
 ;;  revisit smoothing
 ;;  check monotonicity
 
+;;Right now, we focus on AC cuts....
+;;It's possible there's no AC to begin with....so we only have 1
+
 ;;We want to handle our smoothing/offset/
 (defn make-one-n [results-map m4-workbooks out-root phase-weights one-n-name src-title-str-path {:keys [smooth] :as opts}]
   (let [title-strength (some-> src-title-str-path u/as-dataset) ;;for now...
-        peaks          (parse-peaks m4-workbooks)  ;;we just need the demand records for each result....
+        peaks          (m4books->peak-lookup m4-workbooks)  ;;we just need the demand records for each result....
         consolidated   (->> (for [[k path] results-map]
                               (let [in           (-> path u/as-dataset)
                                     scores       (-> in (compute-scores phase-weights title-strength))
