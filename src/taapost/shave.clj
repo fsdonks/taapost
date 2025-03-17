@@ -621,6 +621,7 @@
         (tc/select-rows [0])
         (tc/ungroup)
         (tc/select-columns flds)
+        #_
         (tc/drop-columns [:Scenario]))))
 
 (defn barchart->src-charts [ds detail]
@@ -649,7 +650,30 @@
   ;;basic pipeline for munging legacy barchart data and turning it into shave charts.
   (def bcd (tc/dataset (io/file-path "~/bcd.txt") {:separator "\t" :key-fn keyword}))
 
-  (def bcd2 (barchart->src-charts bcd unit-detail))
+  (def bcd2 (-> bcd                (barchart->src-charts unit-detail)
+                ;;enable if we only want B, current results show this.
+                #_
+                (tc/select-rows (fn [{:keys [Scenario]}] (= Scenario "B")))))
+
+  ;;lets us merge srcs and branches, excursion for visualizing holes.
+  (defn combine [d]
+    (-> (->>  (for [[{:keys [SRC phase]} data] (tc/group-by d [:SRC :phase]
+                                                            {:result-type :as-map})]
+                (-> (tc/order-by data :Scenario :desc)
+                    (tc/select-rows [0])))
+              (apply tc/concat))
+        (tc/map-rows (fn [{:keys [Scenario RApercent RCPercent RAunavailpercent
+                                  RCunavailpercent Totalpercent UnmetPercent UnmetOverlapPercent] :as r}]
+                       (case Scenario
+                         "B" r
+                         (merge r
+                                {:Scenario "B"
+                                 :RApercent 0.0 :RCpercent 0.0 :RAunavailpercent 0.0
+                                 :RCunavailpercent 0.0 :Totalpercent 0.0 :UnmetPercent 0.0
+                                 :UnmetOverlapPercent 0.0}))))))
+  #_ ;;undo filter for B...
+  (def bcd2 (combine bcd2))
+
   (oz/view! (-> bcd2
                 (tc/select-rows (fn [{:keys [phase]}] (= phase "phase3")))
                 (branch-charts {:title "Aggregated Modeling Results as Percentages of Demand"
@@ -703,3 +727,36 @@
 
 ;; (defmacro deriving [bindings]
 ;;   {:RCUnavailable  (max (- (+ ?NG ?RC) ?SupplyRC))})
+
+
+
+(comment
+  (defn diffunion [s1 s2]
+    (clojure.set/union (clojure.set/difference s1 s2)
+                       (clojure.set/difference s2 s1)))
+  
+  (require '[spork.cljgraph.core :as gr])
+  ;;which SRCs are in one scenario but not the other?
+  ;;we take away a scenario, which branches no longer exist?
+  (def db (->>  (for [[src branch phase scenario] (->> bcd2 u/records (map (juxt :SRC :BRANCH :phase :Scenario)))]
+                  [[src :SRC]
+                   [branch src]
+                   [branch :BRANCH]
+                   [phase branch]
+                   [scenario phase]
+                   [:ROOT scenario]])
+                (apply concat)
+                (gr/add-arcs gr/empty-graph)))
+  ;;if we take out a scenario, then we look for which nodes can't be reached from ROOT.
+  (def as (gr/drop-nodes db ["B"]))
+  (def bs (gr/drop-nodes db ["A"]))
+  (def srca (set (gr/sources as :SRC)))
+  (def srcb (set (gr/sources bs :SRC)))
+
+  (def aw (gr/depth-walk as :ROOT))
+  (def bw (gr/depth-walk bs :ROOT))
+
+  ;;find all paths from root to src.
+  )
+
+
