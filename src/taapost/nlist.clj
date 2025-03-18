@@ -23,7 +23,7 @@
             [(min (or l x) x) (max (or r x) x)])
           [nil nil] xs))
 
-(def ^:dynamic *aggregate* dfn/mean)
+(def ^:dynamic *aggregate* reds/mean)
 
 ;;aux function to copy pandas...looks like we just drop out non-numerical.
 (defn mean [ds]
@@ -87,7 +87,8 @@
   (case *aggregate*
     :mean   reds/mean
     :median reds/prob-median
-    (if (fn? *aggregate* *aggregate*)
+    (if (fn? *aggregate*)
+      *aggregate*
       (throw (ex-info "unknown aggregate reducer" {:in *aggregate*})))))
 
 (defn agg-dynamic
@@ -432,6 +433,7 @@
 
 ;;I think instead of replacing the scores, we just add a couple of columns.
 ;;We want a 2d index, of {SRC {AC LowerScore}}
+;;-1.1 is a placeholder.  We use that to indicate complete cut.
 (defn drop-scores [d]
   (->> (for [[{:keys [SRC]} data] (tc/group-by d :SRC {:result-type :as-map})]
          (let [score-index (->> data
@@ -440,7 +442,7 @@
                                           (assoc acc AC [Score Excess])) {}))
                dropped-index (->> (keys score-index)
                                   (map (fn [AC]
-                                         [AC (get score-index (dec AC) [0 0])]))
+                                         [AC (get score-index (dec AC) [-1.1 -1.1])])) ;;we tack on artifiical negative scores.
                                   (into {}))]
            (-> data
                (tc/map-rows
