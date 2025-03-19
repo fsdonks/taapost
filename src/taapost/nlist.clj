@@ -381,14 +381,18 @@
         (tc/select-columns cnames)
         (tc/rename-columns name))))
 
+;;consistent sorting critera for datasets.
+(defn order-scores [d]
+  (tc/order-by d [:RemainingScore :RemainingExcess] #_[:Score :Excess] :desc))
+
 ;;take a dataset with both scenarios, consolidate s.t. there is only 1 record for
 ;;each [SRC AC RC NG] mixture, which is the "most stressful", drop the intermediate
 ;;column names
 (defn combine [d]
   (-> d
       most-stressful
-      (tc/rename-columns {:Scenario :Most-Stressful})
-      (tc/order-by [:Score :Excess] :desc)
+      (tc/drop-columns [:Scenario])
+      order-scores
       narrow))
 ;;For the final pass (emission), we can traverse the cols that are vector names,
 ;;concat into a nice string name, then dump to excel or tsv as normal.
@@ -473,18 +477,21 @@
                                     scores       (-> in (compute-scores phase-weights title-strength))
                                     wide         (-> scores
                                                      (spread-metrics phase-weights)
-                                                     (tc/add-columns {:Scenario k
-                                                                      :Peak (fn [{:keys [SRC]}]
-                                                                              (or (some-> SRC peaks :Peak) 0))})
+                                                     (tc/add-columns {:Scenario k})
                                                      drop-scores)]
                                 wide))
                             (apply tc/concat))
         scenarios (keys results-map) ;;same as Scenario field.
-        combined  (combine consolidated)]
+        combined  (-> consolidated
+                      (tc/map-rows (fn [{:keys [SRC]}]
+                                     (let [{:keys [Scenario Peak]} (peaks SRC)]
+                                       {:Peak Peak
+                                        :Most-Stressful Scenario})))
+                      combine)]
     (->> (for [s scenarios]
            [s (-> consolidated
                   (tc/select-rows (fn [{:keys [Scenario]}] (= Scenario s)))
-                  (tc/order-by [:Score :Excess] :desc)
+                  order-scores
                   simple-names)])
          (into {:Combined combined})
          (xl/tables->xlsx (io/file-path out-root (str one-n-name ".xlsx"))))))
@@ -509,7 +516,8 @@
   (def m4-books {"A" "A.xlsx"
                  "B" "B.xlsx"})
 
-  (def res (make-one-n results-map m4-books "."  phase-weights "one_n" "../make-one-to-n/resources/SRC_BASELINE.xlsx" {}))
+  (def res (make-one-n results-map m4-books "."  phase-weights "one_n"
+                       "../make-one-to-n/resources/SRC_BASELINE.xlsx" {}))
   ;;dump results to a file...
   #_
   (->> (-> res simple-names  (tc/rename-columns (fn [k] (name k))))
