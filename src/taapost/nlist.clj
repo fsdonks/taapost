@@ -469,18 +469,19 @@
 ;;It's possible there's no AC to begin with....so we only have 1
 
 ;;We want to handle our smoothing/offset/
-(defn make-one-n [results-map m4-workbooks out-root phase-weights one-n-name src-title-str-path {:keys [smooth] :as opts}]
+(defn make-one-n [results-map m4-workbooks out-root phase-weights one-n-name src-title-str-path {:keys [smooth aggregate] :as opts}]
   (let [title-strength (some-> src-title-str-path u/as-dataset) ;;for now...
         peaks          (m4books->peak-lookup m4-workbooks)  ;;we just need the demand records for each result....
-        consolidated   (->> (for [[k path] results-map]
-                              (let [in           (-> path u/as-dataset)
-                                    scores       (-> in (compute-scores phase-weights title-strength))
-                                    wide         (-> scores
-                                                     (spread-metrics phase-weights)
-                                                     (tc/add-columns {:Scenario k})
-                                                     drop-scores)]
-                                wide))
-                            (apply tc/concat))
+        consolidated   (binding [*aggregate* (or aggregate *aggregate*)]
+                         (->> (for [[k path] results-map]
+                                (let [in           (-> path u/as-dataset)
+                                      scores       (-> in (compute-scores phase-weights title-strength))
+                                      wide         (-> scores
+                                                       (spread-metrics phase-weights)
+                                                       (tc/add-columns {:Scenario k})
+                                                       drop-scores)]
+                                  wide))
+                              (apply tc/concat)))
         scenarios (keys results-map) ;;same as Scenario field.
         combined  (-> consolidated
                       (tc/map-rows (fn [{:keys [SRC]}]
@@ -733,3 +734,66 @@
 ;;                 k=phase
 ;;             all_weights[k]= phase_breakout[phase]*results_weights[demand_name]
 ;;     return all_weights
+
+
+(comment
+  ;;exploring using optimization for improving.
+  (require '[spork.opt.dumbanneal :as ann])
+
+  (defn sliding
+    ([^long n] (sliding n 1))
+    ([^long n ^long step]
+     (fn [rf]
+       (let [a (java.util.ArrayDeque. n)]
+         (fn
+           ([] (rf))
+           ([result]
+            (let [result (if (.isEmpty a)
+                           result
+                           (let [v (vec (.toArray a))]
+                             ;;clear first!
+                             (.clear a)
+                             (unreduced (rf result v))))]
+              (rf result)))
+           ([result input]
+            (.add a input)
+            (if (= n (.size a))
+              (let [v (vec (.toArray a))]
+                (dorun (take step (repeatedly #(.removeFirst a))))
+                (rf result v))
+              result)))))))
+
+  (defn dev [orig xs]
+    (->> (map (fn [l r]
+                (let [n (- l r)]
+                  (Math/abs n))) orig xs)
+         (reduce +)))
+
+  (defn mono [xs]
+    (transduce (comp (sliding  2 1)
+                     (filter #(= (count %) 2))
+                     (map (fn [[l r]]
+                            (let [n (- l r)]
+                              (if (neg? n) (- n) 0)))))
+               +  xs))
+
+  (defn mono2 [xs]
+    (into [] (comp (sliding 2 1)
+                   (map (fn [[l r]]
+                          (- l r))))
+          xs))
+
+  (defn score-it [orig xs]
+    (+ (dev orig xs)
+       (* 100 (mono xs))))
+
+  (ann/simple-anneal #(score-it xs %) xs :ranges (vec (for [x xs] [(- x 0.03) (+ x 0.03)])) :equilibration 10 :decay (spork.opt.annealing/geometric-decay 0.90))
+  ;;tensor version
+  ;; (require '[tech.v3.tensor-api :as dtt])
+  ;; (def init
+  ;;   (let [orig xs
+  ;;         mn  (mapv #(- % 0.02) xs)
+  ;;         mx  (mapv #(+ % 0.02) xs)
+  ;;         sol xs]
+  ;;     (dtt/->tensor [orig mn mx sol ] :datatype :float64)))
+  )
