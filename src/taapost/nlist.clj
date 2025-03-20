@@ -459,9 +459,9 @@
        (apply tc/concat)))
 
 ;;  allow caller to specify median vs mean.
-;;Currently missing:
 ;;  verify minimal cuts (e.g. 0 AC) [why does this matter?]
 ;;  offset scores (e.g. supply-at-level(n) -> score-at-level(n-1))
+;;Currently missing:
 ;;  revisit smoothing
 ;;  check monotonicity
 
@@ -510,6 +510,7 @@
      "phase3" 0.25
      "phase4" 0.1
      "comp2" 0.1})
+  #_
   (compute-scores dt phase-weights nil)
 
   (def results-map {"A" "~/repos/make-one-to-n/resources/results.txt"
