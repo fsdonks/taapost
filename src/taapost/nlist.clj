@@ -788,6 +788,11 @@
     (+ (dev orig xs)
        (* 100 (mono xs))))
 
+  ;;we can try to anneal only the outliers....maybe a better metric could help is ID non-adjacent values...
+  ;;ID nearest neighbors, focus on deviations, then use those as decision points for movement to align with neighbors.
+  ;;maybe we look at signals, compute mean, then use that as a direction vector for movement.
+
+
   (ann/simple-anneal #(score-it xs %) xs :ranges (vec (for [x xs] [(- x 0.03) (+ x 0.03)])) :equilibration 10 :decay (spork.opt.annealing/geometric-decay 0.90))
   ;;tensor version
   ;; (require '[tech.v3.tensor-api :as dtt])
@@ -798,3 +803,53 @@
   ;;         sol xs]
   ;;     (dtt/->tensor [orig mn mx sol ] :datatype :float64)))
   )
+
+;;can we determine a heuristic that can do the same thing the annealer does?
+;;we can do iterative refinement....
+;;adjust the outliers to attune to the center of mass?
+
+;;Ideal case -> we have > 2 points.
+;;This allows us to determine
+
+;;simple detection:
+;;is the point on the L <= R?
+
+;;I think we can do piecewise linear appx.
+;;Only need to move non-monotonic points.
+;;Naive solution -> scan through, mark outliers.
+;;if we have an outlier, use the neighborhood to determine
+;;correction
+;;  - naively lerp between l/r
+;;  - only works if we have >= 3 points in the sample
+;;    - we can add a psuedo point at the end to give us 3 though...
+;;
+;;  - can classify 3 cases
+;;    [g g b]
+;;    [b g g]
+;;    [g b g]
+
+;;if the signal has 1 datums, return the signal.
+;;if the signal has 2 datums, if the datums are not ordered, make them equal?
+;;if the signal has 3+ datums, then we can partition by 3 and do a moving average...
+
+;;isotonic regression is pretty easy....
+;;we can traverse in linear time, but every time we have an event,
+;;we need to push an index back on the queue.
+;;so it's possible we have to backtrack to keep monotonicity after we
+;;introduce new points.
+
+;;so if we change x1 and x2 to be the average, we need to step back and check...
+
+;;really naive isotonic regression implementation.
+(defn iso
+  ([op bound idx xs]
+   (if (< idx bound)
+     (let [x1 (xs idx)
+           x2 (xs (inc idx))]
+       (if (op x1 x2)
+         (recur op bound (inc idx) xs)
+         (let [xnew (/ (+ x1 x2) 2.0)]
+           (recur op bound (max (unchecked-dec idx) 0) (assoc xs idx xnew (inc idx) xnew)))))
+     xs))
+  ([op xs] (iso op (- (count xs) 1) 0 xs))
+  ([xs] (iso <= xs)))
