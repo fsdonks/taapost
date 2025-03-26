@@ -101,6 +101,45 @@
    using whatever aggregation strategy is defined."
   [ds group-fields] (agg-by (get-aggregate) ds group-fields))
 
+;;isotonic regression is pretty easy....
+;;we can traverse in linear time, but every time we have an event,
+;;we need to push an index back on the queue.
+;;so it's possible we have to backtrack to keep monotonicity after we
+;;introduce new points.
+
+;;so if we change x1 and x2 to be the average, we need to step back and check...
+
+;;really naive isotonic regression implementation.
+
+(def tries (atom 0))
+(defn iso
+  ([op bound idx xs]
+   (swap! tries inc)
+   (when (> @tries 2000))
+   (if (< idx bound)
+     (let [x1 (xs idx)
+           x2 (xs (inc idx))]
+       (if (op x1 x2)
+         (recur op bound (inc idx) xs)
+         (let [xnew (/ (+ x1 x2) 2.0)
+               _ (println [:violation idx x1 x2 :-> xnew])]
+           (recur op bound (max (unchecked-dec idx) 0) (assoc xs idx xnew (inc idx) xnew)))))
+     xs))
+  ([op xs] (reset! tries 0) (iso op (- (count xs) 1) 0 xs))
+  ([xs] (iso <= xs)))
+#_
+(defn iso [op xs]
+  (let [n  (count xs)]
+    (loop [i  1
+           xs xs]
+      (if (< i n)
+        (if (op (xs i) (xs (dec i)))
+          (let [pv (/ (+ (xs i) (xs (dec i))) 2.0)
+                xs (assoc xs i pv (dec i) pv)]
+            (recur i xs))
+          (recur (unchecked-inc i) xs))
+        xs))))
+
 ;;N List Computation
 ;;==================
 
@@ -198,13 +237,6 @@
         (tc/dataset? in) in
         :else (throw (ex-info "expected file path or dataset" {:in in}))))
 
-;;this seems wrong....how are the entries going to be the same size?
-;;maybe it's guaranteed.
-(defn add-smoothed [gr col-name new-name]
-  (let [from (gr col-name)
-        [mn mx] (min-max from)]
-    (tc/add-or-replace-column gr new-name (range mx (dec mn) -1))))
-
 (defn results-by-phase [df] (-> df (agg-mean [:SRC :AC :phase])))
 
 ;;Make sure that scores are monotonically decreasing as inventory decreases
@@ -298,16 +330,6 @@
                         :Score  (->> (mcols :d-weighted) (map #(get row % 0)) (reduce + 0))
                         :Excess (->> (mcols :e-weighted) (map #(get row % 0)) (reduce + 0))})))))
 
-;;legacy smoothing op:
-;;  sort the scores in monotonically decreasing order, then assign inventory....
-;;  We used to not do this.  We used to smooth by "carrying down" prior values to ensure
-;;  adjacent values were >= prior.
-;;  Trying to determine if this is any better than just lerping....It's kind of faux
-;;  swapping the inventory on top of the metrics to force monotonicity.
-(defn naive-smooth [scores]
-  (->> (tc/group-by scores [:SRC] {:result-type :as-map})
-       (mapv (fn [[k v]] (add-smoothed v :AC :AC-Smooth)))
-       (apply tc/concat)))
 
 ;;sketching out our skeleton here...
 
@@ -409,38 +431,21 @@
                                    (name x)))))]
     (tc/rename-columns d (zipmap (tc/column-names d) cnames))))
 
-;; #add the last ra cuts if there is no rc
-;; def add_last_ra_cuts(scored_results):
-;;     #Since we are using the score from the next lowest inventory, we
-;;         #need to add additional records to cover the case where we we have no
-;;         #runs from 0 RA 0 NG and 0 RC so that we could cut the entire RA if we
-;;         #wanted to.
-;;         test_frame=scored_results[(scored_results['AC']==1)
-;;                               & (scored_results['NG_inv']==0)
-;;                               & (scored_results['RC_inv']==0)].copy()
-;;         test_frame[('Score', '')]=test_frame[('Score', '')]-1.1 ;;why 1.1?
-;;         test_frame[('AC', '')]=0
-;;         zero_cols=['demand_met', 'dmet_times_weight', 'emet_times_weight',
-;;                    'excess_met']
-;;         test_frame[zero_cols]=0
-;;         return test_frame
-
-;; def drop_scores(df):
-;;   test_frame=add_last_ra_cuts(df)
-;;   #add on records to cut the last unit in the inventory.
-;;   scored_results=pd.concat([df, test_frame], ignore_index=True)
-;;   #filter out the base inventories
-;;   scored_results=scored_results[scored_results['AC']!=scored_results['max_AC_inv']]
-;;   #add one to the remaining inventory records
-;;   scored_results['AC']=scored_results['AC']+1
-;;   return scored_results
+;;given a dataset (subgroup) of a single scenario's SRC score data,
+;;we apply isotonic regression to smooth the original score.
+(defn smooth-scores [d]
+  (-> d
+      (tc/order-by [:AC] :desc)
+      (tc/add-column :ScoreRaw (d :Score))
+      (tc/add-or-replace-column :Score (iso > (vec (d :Score))))))
 
 ;;I think instead of replacing the scores, we just add a couple of columns.
 ;;We want a 2d index, of {SRC {AC LowerScore}}
 ;;-1.1 is a placeholder.  We use that to indicate complete cut.
-(defn drop-scores [d]
-  (->> (for [[{:keys [SRC]} data] (tc/group-by d :SRC {:result-type :as-map})]
-         (let [score-index (->> data
+(defn smooth-and-drop-scores [d]
+  (->> (for [[{:keys [SRC]} data] (tc/group-by d [:SRC] {:result-type :as-map})]
+         (let [data (smooth-scores data)
+               score-index (->> data
                                 u/records
                                 (reduce (fn [acc {:keys [AC Score Excess]}]
                                           (assoc acc AC [Score Excess])) {}))
@@ -458,13 +463,6 @@
                (tc/select-rows (fn [{:keys [Remaining]}] (>=  Remaining 0))))))
        (apply tc/concat)))
 
-;;  allow caller to specify median vs mean.
-;;  verify minimal cuts (e.g. 0 AC) [why does this matter?]
-;;  offset scores (e.g. supply-at-level(n) -> score-at-level(n-1))
-;;Currently missing:
-;;  revisit smoothing
-;;  check monotonicity
-
 ;;Right now, we focus on AC cuts....
 ;;It's possible there's no AC to begin with....so we only have 1
 
@@ -479,7 +477,7 @@
                                       wide         (-> scores
                                                        (spread-metrics phase-weights)
                                                        (tc/add-columns {:Scenario k})
-                                                       drop-scores)]
+                                                       smooth-and-drop-scores)]
                                   wide))
                               (apply tc/concat)))
         scenarios (keys results-map) ;;same as Scenario field.
@@ -803,53 +801,3 @@
   ;;         sol xs]
   ;;     (dtt/->tensor [orig mn mx sol ] :datatype :float64)))
   )
-
-;;can we determine a heuristic that can do the same thing the annealer does?
-;;we can do iterative refinement....
-;;adjust the outliers to attune to the center of mass?
-
-;;Ideal case -> we have > 2 points.
-;;This allows us to determine
-
-;;simple detection:
-;;is the point on the L <= R?
-
-;;I think we can do piecewise linear appx.
-;;Only need to move non-monotonic points.
-;;Naive solution -> scan through, mark outliers.
-;;if we have an outlier, use the neighborhood to determine
-;;correction
-;;  - naively lerp between l/r
-;;  - only works if we have >= 3 points in the sample
-;;    - we can add a psuedo point at the end to give us 3 though...
-;;
-;;  - can classify 3 cases
-;;    [g g b]
-;;    [b g g]
-;;    [g b g]
-
-;;if the signal has 1 datums, return the signal.
-;;if the signal has 2 datums, if the datums are not ordered, make them equal?
-;;if the signal has 3+ datums, then we can partition by 3 and do a moving average...
-
-;;isotonic regression is pretty easy....
-;;we can traverse in linear time, but every time we have an event,
-;;we need to push an index back on the queue.
-;;so it's possible we have to backtrack to keep monotonicity after we
-;;introduce new points.
-
-;;so if we change x1 and x2 to be the average, we need to step back and check...
-
-;;really naive isotonic regression implementation.
-(defn iso
-  ([op bound idx xs]
-   (if (< idx bound)
-     (let [x1 (xs idx)
-           x2 (xs (inc idx))]
-       (if (op x1 x2)
-         (recur op bound (inc idx) xs)
-         (let [xnew (/ (+ x1 x2) 2.0)]
-           (recur op bound (max (unchecked-dec idx) 0) (assoc xs idx xnew (inc idx) xnew)))))
-     xs))
-  ([op xs] (iso op (- (count xs) 1) 0 xs))
-  ([xs] (iso <= xs)))
