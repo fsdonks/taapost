@@ -1,6 +1,7 @@
 (ns taapost.iso
   (:require [ham-fisted.api :as hf]))
 
+#_
 (defn iso [op xs]
   (let [n  (count xs)]
     (loop [i  1
@@ -14,23 +15,40 @@
           (recur (unchecked-inc i) xs))
         xs))))
 
+(defn merge-blocks [l r]
+  (let [n2   (+ (l :n) (r :n))
+        sum2 (+ (l :sum) (r :sum))]
+    {:n  n2
+     :sum sum2
+     :v  (double (/ sum2 n2))}))
+
 ;;let's adopt a block-merge approach.
+;;we can scan left on insert...
+;;cheap insertion would be nice....
+(defn merge-left [blocks new-block idx]
+  (loop [l   idx
+         acc new-block]
+    (if (> l 0)
+      (let [left (blocks l)]
+        (if (<= (left :v) (acc :v))
+          [(into (conj (subvec blocks 0 l) acc) (subvec blocks (+ l 2))) (inc l)]
+          (recur (dec l) (merge-blocks (blocks l) acc))))
+      [(into (conj (subvec blocks 0 l) acc) (subvec blocks (+ l 2))) (inc l)])))
+
 (defn iso [xs]
   (let [blocks (->> xs (mapv (fn [x] {:n 1 :sum x :v x})))]
     (loop [acc blocks
            idx 0]
+      (println idx)
+      (println acc)
       (if (< idx (dec (count acc)))
         (let [l (acc idx)
-              r (acc (inc idx))]
+              r (acc (inc idx))
+              _ (println [idx l r acc ])]
           (if (<= (l :v) (r :v))
             (recur acc (unchecked-inc idx))
-            (let [n2   (+ (l :n) (r :n))
-                  sum2 (+ (l :sum) (r :sum))
-                  new-block {:n  n2
-                             :sum sum2
-                             :v  (double (/ sum2 n2))}
-                  new-blocks (into (conj (subvec acc 0 idx) new-block) (subvec acc (+ idx 2)))]
-              (recur new-blocks 0))))
+            (let [[new-blocks new-idx] (merge-left acc (merge-blocks l r) idx)]
+              (recur new-blocks new-idx))))
         (->>  (for [{:keys [n sum v]} acc]
                 (repeat n v))
               (apply concat)
