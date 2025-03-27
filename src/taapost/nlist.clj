@@ -11,6 +11,7 @@
             [tech.v3.libs.fastexcel]
             [taapost.util :as u :refer [visualize]]
             [taapost.demandanalysis :as da]
+            [taapost.iso :as iso]
             [spork.util.io :as io]
             [spork.util.excel.core :as xl]))
 
@@ -101,44 +102,6 @@
    using whatever aggregation strategy is defined."
   [ds group-fields] (agg-by (get-aggregate) ds group-fields))
 
-;;isotonic regression is pretty easy....
-;;we can traverse in linear time, but every time we have an event,
-;;we need to push an index back on the queue.
-;;so it's possible we have to backtrack to keep monotonicity after we
-;;introduce new points.
-
-;;so if we change x1 and x2 to be the average, we need to step back and check...
-
-;;really naive isotonic regression implementation.
-
-(def tries (atom 0))
-(defn iso
-  ([op bound idx xs]
-   (swap! tries inc)
-   (when (> @tries 2000))
-   (if (< idx bound)
-     (let [x1 (xs idx)
-           x2 (xs (inc idx))]
-       (if (op x1 x2)
-         (recur op bound (inc idx) xs)
-         (let [xnew (/ (+ x1 x2) 2.0)
-               _ (println [:violation idx x1 x2 :-> xnew])]
-           (recur op bound (max (unchecked-dec idx) 0) (assoc xs idx xnew (inc idx) xnew)))))
-     xs))
-  ([op xs] (reset! tries 0) (iso op (- (count xs) 1) 0 xs))
-  ([xs] (iso <= xs)))
-#_
-(defn iso [op xs]
-  (let [n  (count xs)]
-    (loop [i  1
-           xs xs]
-      (if (< i n)
-        (if (op (xs i) (xs (dec i)))
-          (let [pv (/ (+ (xs i) (xs (dec i))) 2.0)
-                xs (assoc xs i pv (dec i) pv)]
-            (recur i xs))
-          (recur (unchecked-inc i) xs))
-        xs))))
 
 ;;N List Computation
 ;;==================
@@ -435,9 +398,10 @@
 ;;we apply isotonic regression to smooth the original score.
 (defn smooth-scores [d]
   (-> d
-      (tc/order-by [:AC] :desc)
+      (tc/order-by [:AC] :asc)
       (tc/add-column :ScoreRaw (d :Score))
-      (tc/add-or-replace-column :Score (iso > (vec (d :Score))))))
+      (tc/add-or-replace-column :Score (iso/iso (vec (d :Score))))
+      (tc/order-by [:AC] :desc)))
 
 ;;I think instead of replacing the scores, we just add a couple of columns.
 ;;We want a 2d index, of {SRC {AC LowerScore}}
