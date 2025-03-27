@@ -394,13 +394,36 @@
                                    (name x)))))]
     (tc/rename-columns d (zipmap (tc/column-names d) cnames))))
 
+;;[0 1 2 2 2 3]
+;;[0 1 2 2.0001 2.0002 2.0003 3]
+
+;;make sure the delta is feasible...
+;;we know the value is in between [l [v v v] r]
+;;so
+;;[v + d1] s.t. v + (n*d1) < r
+
+;;WIP
+(defn pad-order [xs]
+  (->> xs
+       (partition-by identity)
+       (mapcat (fn [part]
+                 (if-not (second part)
+                   part
+                   (let [n     (count part)
+                         delta (/ 0.0001 count)] ;;this "could" fail us....
+                     (map-indexed (fn [idx x]
+                                    (+ (* idx delta) x))))))) 
+       vec))
+
 ;;given a dataset (subgroup) of a single scenario's SRC score data,
 ;;we apply isotonic regression to smooth the original score.
 (defn smooth-scores [d]
   (-> d
       (tc/order-by [:AC] :asc)
       (tc/add-column :ScoreRaw (d :Score))
-      (tc/add-or-replace-column :Score (iso/iso (vec (d :Score))))
+      (tc/add-or-replace-column :Score (->> (vec (d :Score))
+                                            iso/iso
+                                            pad-order))
       (tc/order-by [:AC] :desc)))
 
 ;;I think instead of replacing the scores, we just add a couple of columns.
