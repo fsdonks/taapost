@@ -372,6 +372,9 @@
 ;;take a dataset with both scenarios, consolidate s.t. there is only 1 record for
 ;;each [SRC AC RC NG] mixture, which is the "most stressful", drop the intermediate
 ;;column names
+
+;;TBD we get a problem with the sample data with 19539RC00, it's picking from both,
+;;which screws the monotonicity.  We need to pick one and stick with it.
 (defn combine [d]
   (-> d
       most-stressful
