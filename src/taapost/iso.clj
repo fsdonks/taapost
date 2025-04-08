@@ -76,6 +76,8 @@
          (expand dir acc)))))
   ([xs] (iso :asc xs)))
 
+;;original naive block solution, starts from 0 every time.  we do better.
+#_
 (defn iso1 [xs]
   (let [blocks (->> xs (mapv (fn [x] {:n 1 :sum x :v x})))]
     (loop [acc blocks

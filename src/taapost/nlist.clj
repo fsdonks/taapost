@@ -363,12 +363,11 @@
 (defn narrow [ds]
   (let [cnames (->> (tc/column-names ds) (filterv (complement vector?)))]
     (-> ds
-        (tc/select-columns cnames)
-        (tc/rename-columns name))))
+        (tc/select-columns cnames))))
 
 ;;consistent sorting critera for datasets.
 (defn order-scores [d]
-  (tc/order-by d [:RemainingScore :RemainingExcess] #_[:Score :Excess] :desc))
+  (tc/order-by d [:RemainingScore :RemainingExcess] :desc))
 
 ;;take a dataset with both scenarios, consolidate s.t. there is only 1 record for
 ;;each [SRC AC RC NG] mixture, which is the "most stressful", drop the intermediate
@@ -394,26 +393,21 @@
                                    (name x)))))]
     (tc/rename-columns d (zipmap (tc/column-names d) cnames))))
 
-;;[0 1 2 2 2 3]
-;;[0 1 2 2.0001 2.0002 2.0003 3]
+;;we add a little bias into the ordered resulting score to ensure
+;;we have decreasing scores by AC compo.
+;;This lets us bake some order into the isotonic regression, where
+;;we may end up with duplicate values.  Having a little noise shouldn't
+;;affect the spirit of the result, but it helps us order things.
+;;More importantly, we document the bias so the smoothed score can
+;;be inferred if one is so inclined.
 
-;;make sure the delta is feasible...
-;;we know the value is in between [l [v v v] r]
-;;so
-;;[v + d1] s.t. v + (n*d1) < r
-
-;;WIP
-(defn pad-order [xs]
-  (->> xs
-       (partition-by identity)
-       (mapcat (fn [part]
-                 (if-not (second part)
-                   part
-                   (let [n     (count part)
-                         delta (/ 0.0001 count)] ;;this "could" fail us....
-                     (map-indexed (fn [idx x]
-                                    (+ (* idx delta) x))))))) 
-       vec))
+(defn add-bias [d]
+  (let [scores     (d :Score)
+        bias       (mapv #(* % 0.001) (range 0 (count scores)))
+        new-scores (dfn/+ scores bias)]
+    (-> d
+        (tc/add-or-replace-columns {:Score new-scores
+                                    :Bias  bias}))))
 
 ;;given a dataset (subgroup) of a single scenario's SRC score data,
 ;;we apply isotonic regression to smooth the original score.
@@ -422,8 +416,8 @@
       (tc/order-by [:AC] :asc)
       (tc/add-column :ScoreRaw (d :Score))
       (tc/add-or-replace-column :Score (->> (vec (d :Score))
-                                            iso/iso
-                                            pad-order))
+                                            iso/iso))
+      add-bias
       (tc/order-by [:AC] :desc)))
 
 ;;I think instead of replacing the scores, we just add a couple of columns.
@@ -473,7 +467,8 @@
                                      (let [{:keys [Scenario Peak]} (peaks SRC)]
                                        {:Peak Peak
                                         :Most-Stressful Scenario})))
-                      combine)]
+                      combine
+                      (tc/rename-columns name))]
     (->> (for [s scenarios]
            [s (-> consolidated
                   (tc/select-rows (fn [{:keys [Scenario]}] (= Scenario s)))
