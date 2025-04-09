@@ -352,6 +352,10 @@
 ;;E.g. find the minimum performance.
 
 (def score-key (juxt :Score :Excess (comp - :TotalDemand) (comp - :Peak)))
+;;this won't work for our monotone signals....
+;;Worst case, we may have scores interleaving.
+;;so instead of naive sorting, we need to do a group-by, or filter the remaining
+;;based on the first chosen? 
 (defn most-stressful [d]
   (->> (for [[{:keys [SRC AC RC NG]} data] (tc/group-by d [:SRC :AC :RC :NG] {:result-type :as-map})]
          (-> data

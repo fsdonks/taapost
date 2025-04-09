@@ -39,10 +39,22 @@
     (if remainder (into base remainder)
       base)))
 
+#_
 (defn merge-left [blocks new-block idx]
   (loop [l   idx
          acc new-block]
     (if (> l 0)
+      (let [left (blocks l)]
+        (if (<= (left :v) (acc :v))
+          [(splice blocks (inc l) (+ idx 2) acc) (inc l)]
+          (recur (dec l) (merge-blocks (blocks l) acc))))
+      [(splice blocks (inc l) (+ idx 2) acc) (inc l)])))
+
+;;if we merge-left, check the result to the left.
+(defn merge-left [blocks new-block idx]
+  (loop [l   idx
+         acc new-block]
+    (if (>= l 0)
       (let [left (blocks l)]
         (if (<= (left :v) (acc :v))
           [(splice blocks (inc l) (+ idx 2) acc) (inc l)]
