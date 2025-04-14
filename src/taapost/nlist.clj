@@ -355,12 +355,16 @@
 ;;this won't work for our monotone signals....
 ;;Worst case, we may have scores interleaving.
 ;;so instead of naive sorting, we need to do a group-by, or filter the remaining
-;;based on the first chosen? 
+;;based on the first chosen?
+;;legacy impl goes with first chosen.
 (defn most-stressful [d]
   (->> (for [[{:keys [SRC AC RC NG]} data] (tc/group-by d [:SRC :AC :RC :NG] {:result-type :as-map})]
-         (-> data
-             (tc/order-by score-key)
-             (tc/select-rows [0])))
+         (let [scored (-> data  (tc/order-by score-key))
+               sc     (-> scored
+                          (tc/select-rows [0])
+                          :Scenario
+                          first)]
+           (tc/select-rows scored (fn [{:keys [Scenario]}] (= Scenario sc)))))
        (apply tc/concat)))
 
 ;;drop all the intermediate computed fields...
