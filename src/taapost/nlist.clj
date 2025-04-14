@@ -18,6 +18,13 @@
 ;;utils
 ;;=====
 
+;;ref https://stackoverflow.com/questions/10751638/clojure-rounding-to-decimal-places
+(defn round2
+  "Round a double to the given precision (number of significant digits)"
+  ^double [^long precision ^double d]
+  (let [factor (Math/pow 10 precision)]
+    (/ (Math/round (* d factor)) factor)))
+
 (defn indices [xs] (zipmap xs (range)))
 (defn min-max [xs]
   (reduce (fn [[l r] x]
@@ -455,8 +462,28 @@
                (tc/select-rows (fn [{:keys [Remaining]}] (>=  Remaining 0))))))
        (apply tc/concat)))
 
+(defn round-cols [ds]
+  (let [rounder #(if % (round2 5 %) %)]
+    (tc/update-columns ds :type/float #(mapv rounder %))))
+
 ;;Right now, we focus on AC cuts....
 ;;It's possible there's no AC to begin with....so we only have 1
+
+(defn non-mono-SRCs [d]
+  (->> (for [[{:keys [SRC]} data] (tc/group-by d [:SRC] {:result-type :as-map})]
+         (when-not (->> data
+                        :Score
+                        (reduce (fn [l r] (if (>= l r) r (reduced false))) (first d))
+                        boolean)
+           SRC))
+       vec))
+
+;;sanity check to ensure we're not producing counter intuitive results.
+(defn mono-check [d]
+  (let [srcs (non-mono-SRCs d)]
+    (if (empty? srcs) d
+        (do (println [:WARNING "Non Montonic Scores Detected!" {:SRCs srcs}])
+            d))))
 
 ;;We want to handle our smoothing/offset/
 (defn make-one-n [results-map m4-workbooks out-root phase-weights one-n-name src-title-str-path {:keys [smooth aggregate] :as opts}]
@@ -479,12 +506,16 @@
                                        {:Peak Peak
                                         :Most-Stressful Scenario})))
                       combine
-                      (tc/rename-columns name))]
+                      (tc/rename-columns name)
+                      round-cols
+                      mono-check)]
     (->> (for [s scenarios]
            [s (-> consolidated
                   (tc/select-rows (fn [{:keys [Scenario]}] (= Scenario s)))
                   order-scores
-                  simple-names)])
+                  simple-names
+                  round-cols
+                  mono-check)])
          (into {:Combined combined})
          (xl/tables->xlsx (io/file-path out-root (str one-n-name ".xlsx"))))))
 
