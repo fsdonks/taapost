@@ -82,7 +82,7 @@
             :axis {#_ #_:labels false :title nil}},
     :color {:field "trend", :type "nominal"
             :scale {:domain [:fill :new-risk :unfilled]
-                    :range  ["green" (colors :cardinal) #_"red" "black"]
+                    :range  ["green" (colors :cardinal)  "black"]
                             #_[(colors :forest-green) (colors :cardinal)  "black"]}}
     }})
 
