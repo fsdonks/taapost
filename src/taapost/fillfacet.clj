@@ -37,36 +37,54 @@
                 "RTC"         0.60}})
   (def impact {:light 0.05
                :medium 0.10
-               :heavy  0.2})
-(def notional
-  (-> (tc/dataset (for [branch ["Aviation" "Donkeys" "Hobbits"]
-                        phase  ["Competition" "Conflict" "RTC"]
-                        option [:light :medium :heavy]]
-                    (let [base     (get-in base-fill [branch phase])
-                          unfilled (- 1.0 base)
-                          delta    (impact option)
-                          fill     (- base delta)
-                          new-risk delta]
-                      {:branch branch :phase phase :option option
-                       :unfilled unfilled
-                       :fill fill
-                       :new-risk new-risk})))
-      (tc/pivot->longer #{:unfilled :fill :new-risk}
-          {:target-columns :trend :value-column-name :value})))
+               :heavy  0.2
+               :nuts 0.3})
+  (def branches (->> (range 20) (mapv #(str "Branch " %))))
+  (def branch->base (zipmap branches (cycle (keys base-fill))))
+
+  (def notional
+    (-> (tc/dataset (for [branch branches
+                          phase  ["Competition" "Conflict" "RTC"]
+                          option [:light :medium :heavy :nuts]]
+                      (let [base     (get-in base-fill [(branch->base branch) phase])
+                            unfilled (- 1.0 base)
+                            delta    (impact option)
+                            fill     (- base delta)
+                            new-risk delta]
+                        {:branch branch :phase phase :option option
+                         :unfilled unfilled
+                         :fill fill
+                         :new-risk new-risk})))
+        (tc/pivot->longer #{:unfilled :fill :new-risk}
+                          {:target-columns :trend :value-column-name :value})))
 )
 
+(def colors {:forest-green "#238823"
+             :cardinal "#D2222D"})
 (def bar-spec
   {;; :$schema "https://vega.github.io/schema/vega-lite/v6.json",
-   :data nil ;;{:url "data/barley.json"},
+   :width 400
+   :background "lightgrey"
+   :height 50
+   :data nil
    :mark "bar",
-   :encoding {:column {:field "phase"},
-              :row    {:field "branch"}
-              :x     {:field "value", :type "quantitative", :aggregate "sum"},
-              :y     {:field "option", :type "nominal"},
-              :color {:field "trend", :type "nominal"
-                      :scale {:domain [:fill :new-risk :unfilled]
-                              :range  ["green" "red" "black"]}}
-              }})
+   :encoding
+   {
+    :column {:field "phase"
+             :header {:title "Phase"}
+             :spacing 1},
+    :row    {:field "branch"
+             :header {:title "Branch" :labelAngle 0 :labelAlign "left"}
+             :spacing 1}
+    :x     {:field "value", :type "quantitative", :aggregate "sum"
+            :axis {#_ #_:labels false :title "Percent Fill" :format "%"}} ,
+    :y     {:field "option", :type "nominal"
+            :axis {#_ #_:labels false :title nil}},
+    :color {:field "trend", :type "nominal"
+            :scale {:domain [:fill :new-risk :unfilled]
+                    :range  ["green" (colors :cardinal) #_"red" "black"]
+                            #_[(colors :forest-green) (colors :cardinal)  "black"]}}
+    }})
 
 (defn bar-plot [d]
   [:vega  (assoc-in bar-spec
