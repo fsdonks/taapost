@@ -11,8 +11,8 @@
 (ns taapost.fillfacet
   (:require [clojure.walk :as w]
             [oz [core :as oz] [headless :as h]]
-            [scicloj.tableplot.v1.hanami :as hanami]
-            [aerial.hanami.templates :as ht]
+            ;;[scicloj.tableplot.v1.hanami :as hanami]
+            ;;[aerial.hanami.templates :as ht]
             [hiccup.core :as hc]
             [tablecloth.api :as tc]
             [tech.v3.datatype.functional :as dfn]

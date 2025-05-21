@@ -1,4 +1,4 @@
-(defproject taapost "0.1.0-SNAPSHOT"
+(defproject taapost "0.1.1-SNAPSHOT"
   :description "FIXME: write description"
   :url "http://example.com/FIXME"
   :license {:name "EPL-2.0 OR GPL-2.0-or-later WITH Classpath-exception-2.0"
@@ -13,7 +13,7 @@
                  [commons-io/commons-io "2.11.0"]
                  [roz/roz  "b88bc3617d467254f37c4914c91b41aab734f0cb"
                   :exclusions [com.taoennso/timbre com.taoennso/encore]]
-                 [org.scicloj/tableplot "1-beta9.1"]
+                 ;[org.scicloj/tableplot "1-beta9.1"]
                  [org.clojure/tools.reader "1.3.6"]
                  [com.taoensso/timbre "6.6.1"]
                  [com.taoensso/encore  "3.128.0"]
