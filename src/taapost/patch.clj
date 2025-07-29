@@ -47,4 +47,29 @@ var fs = {'readFile':readFile};
 ")
       (.eval (slurp (.getResource (class oz.headless/render ) "/oz/public/js/vega.js")))
       (.eval (slurp (.getResource (class oz.headless/render ) "/oz/public/js/vega-lite.js"))))))
+
+;;have to redef these with the patched engine
+(defn make-js-fn [js-text]
+  (let [^java.util.function.Function f (.eval engine js-text)]
+    (fn [& args] (.apply f (to-array args)))))
+
+(def vega-lite->vega
+  "Converts a VegaLite spec into a Vega spec."
+  (make-js-fn "function(vlSpec) { return JSON.stringify(vegaLite.compile(JSON.parse(vlSpec)).spec);}"))
+
+(def vega-spec->view
+  "Converts a Vega spec into a Vega view object, finalizing all resources."
+  (make-js-fn "function(spec) { return new vega.View(vega.parse(JSON.parse(spec)), {renderer:'svg'}).finalize();}"))
+
+(def view->svg
+  "Converts a Vega view object into an SVG."
+  (make-js-fn "function (view) {
+    var promise = Java.type('clojure.core$promise').invokeStatic();
+    view.toSVG(1.0).then(function(svg) {
+        Java.type('clojure.core$deliver').invokeStatic(promise,svg);
+    }).catch(function(err) {
+        Java.type('clojure.core$deliver').invokeStatic(promise,'<svg><text>error</text></svg>');
+    });
+    return promise;
+}"))
 (in-ns 'taapost.patch)
