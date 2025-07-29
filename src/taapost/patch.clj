@@ -45,6 +45,6 @@ function readFile(path, callback) {
 }
 var fs = {'readFile':readFile};
 ")
-      (.eval (slurp (clojure.java.io/resource "vega.js")))
-      (.eval (slurp (clojure.java.io/resource "vega-lite.js"))))))
+      (.eval (slurp (clojure.java.io/resource "oz/public/js/vega.js")))
+      (.eval (slurp (clojure.java.io/resource "oz/public/js/vega-lite.js"))))))
 (in-ns 'taapost.patch)
