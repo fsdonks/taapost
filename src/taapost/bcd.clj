@@ -109,13 +109,13 @@
                       (for [{:keys [path scenario]} fls]
                         (let [res (into []
                                         (tbl/tabdelimited->records (slurp path)
-                                                                   :schema results-shema))]
+                                                                   :schema results-schema))]
                           (bar-chart-data res :scenario scenario))))]
       (tbl/records->file bcds (io/file-path dir (str "bcd_" nm ".txt"))))))
 
 (def outflds
   (array-map
-   {:SRC :text
+    :SRC :text
     :key :text
     :AC :int
     :NG :int
@@ -125,16 +125,16 @@
     :dmetRA :double
     :dmetRC :double
     :ACunavilable :double
-    :RCunavailable :double}))
+    :RCunavailable :double))
 
 (defn cat-bcds [root & {:keys [to]}]
-  (let [to (or to (io/file-path roo "bcd-all.txt"))]
+  (let [to (or to (io/file-path root "bcd-all.txt"))]
     (-> (->> (file-seq (io/file root))
              (filter (fn [fl] (clojure.string/includes? (io/fname fl) "bcd_")))
              (mapcat (fn [fl]
                        (let [from (io/fname fl)
                              _ (println [:concatenating from])]
                          (->> (io/fpath fl)
-                              tbl/tabldelimited->records
+                              tbl/tabdelimited->records
                               (into [] (map (fn [r] (assoc r :source from)))))))))
         (tbl/records->file (io/file-path to) :field-order (vec (keys outflds))))))
