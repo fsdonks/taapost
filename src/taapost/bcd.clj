@@ -69,7 +69,7 @@
    :RC-deployable :int
    :AC-not-ready :int
    :RC-not-ready :int
-   :NG-not-raeady :int
+   :NG-not-ready :int
    :AC-total :int
    :NG-total :int
    :RC-total :int
@@ -101,9 +101,9 @@
                  :scenario scenario})))
        (group-by :parent)))
 
-(defn do-bcds [root]
-  (doseq [[dir fls] (get-excursions root)]
-    (let [_ (println [:doing dir])
+(defn do-bcds [root scenario-str]
+  (doseq [[dir fls] (get-excursions root scenario-str)]
+    (let [_  (println [:doing dir])
           nm (-> fls first :path ename)
           bcds (apply concat
                       (for [{:keys [path scenario]} fls]
