@@ -12,8 +12,9 @@
 (defn mean [xs]
   (->> xs
        (reduce (fn [[sum n] x]
-                 [(+ sum n) (inc n)]) [0 0])
-       (apply /)))
+                 [(+ sum x) (inc n)]) [0 0])
+       (apply /)
+       double))
 
 ;;just some aliases.
 
@@ -52,6 +53,27 @@
                                                  (Demand %))))))
          (sort-by (juxt :SRC (comp - :AC) (comp - :NG) (comp - :RC) :phase)))))
 
+(defn bar-chart-entry [{:keys [SRC AC NG RC phase] :as r}]
+  (let [RAFill   :AC-fill
+        RAExcess :AC-deployable
+        Demand   :total-quantity
+        RCFill   (fn [{:keys [NG-fill RC-fill]}] (+ NG-fill RC-fill))
+        RCExcess (fn [{:keys [NG-deployable RC-deployable]}]
+                   (+ NG-deployable RC-deployable))]
+    (array-map
+     :SRC SRC
+     :key (str SRC AC NG RC (case phase "comp1" "c" "p") "entry")
+     :AC  AC
+     :NG  NG
+     :RC  RC
+     :phase phase
+     :Scenario "scenario"
+     :dmetRA (safe-div (+ (RAFill r) (RAExcess r)) (Demand r))
+     :dmetRC (safe-div (+ (RCFill r) (RCExcess r)) (Demand r))
+     :ACunavailable (safe-div (:AC-not-ready r) (Demand r))
+     :RCunavailable (safe-div (+ (:RC-not-ready r) (:NG-not-ready r))
+                                        (Demand r)))))
+
 (def results-schema
   (array-map
    :rep-seed :double
@@ -68,8 +90,8 @@
    :NG-deployable :int
    :RC-deployable :int
    :AC-not-ready :int
-   :RC-not-ready :int
    :NG-not-ready :int
+   :RC-not-ready :int
    :AC-total :int
    :NG-total :int
    :RC-total :int
